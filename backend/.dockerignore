@@ -1,0 +1,5 @@
+.venv
+data
+storage/attachments/*
+__pycache__
+*.pyc
