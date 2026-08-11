@@ -26,10 +26,17 @@ WHATSAPP_NUMBER_ASSISTANT = os.getenv("WHATSAPP_NUMBER_ASSISTANT", "")
 WHATSAPP_SEND_TEXT_URL = os.getenv("WHATSAPP_SEND_TEXT_URL", "")
 WHATSAPP_SEND_TEXT_TOKEN = os.getenv("WHATSAPP_SEND_TEXT_TOKEN", "")
 WHATSAPP_SEND_SESSION = os.getenv("WHATSAPP_SEND_SESSION", "email-assistance")
+NAGER_DATE_BASE_URL = os.getenv("NAGER_DATE_BASE_URL", "https://date.nager.at/api/v4/Holidays")
 
 DEMO_USER = {
     "name": "Usuario de Prueba",
     "email": os.getenv("DEMO_USER_EMAIL", "demo@example.com"),
     "password": os.getenv("DEMO_USER_PASSWORD", "Demo123!"),
     "organization_name": os.getenv("DEMO_ORGANIZATION_NAME", "Organizacion Demo"),
+}
+
+SUPER_ROOT_USER = {
+    "name": "Master Email Assistance",
+    "email": os.getenv("SUPER_ROOT_EMAIL", "master@emailasistance.com"),
+    "password": os.getenv("SUPER_ROOT_PASSWORD", "123"),
 }

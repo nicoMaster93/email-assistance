@@ -9,6 +9,7 @@ Modulos:
 - `main.py`: crea la app FastAPI, CORS, startup e incluye routers.
 - `config.py`: lee `.env` y define rutas/variables.
 - `db.py`: conexion SQLite/Postgres, schema inicial y seed del usuario demo.
+- `migrations/`: migraciones versionadas aplicadas al iniciar el backend.
 - `security.py`: hash de password y token Bearer HMAC simple.
 - `dependencies.py`: obtiene usuario actual desde `Authorization: Bearer`.
 - `routers/auth.py`: login.
@@ -23,6 +24,15 @@ Modulos:
 
 ## Base de Datos
 
+Los cambios de esquema se manejan con migraciones versionadas en:
+
+```text
+backend/app/migrations
+```
+
+`backend/app/migrations/runner.py` aplica las migraciones pendientes y registra versiones en `schema_migrations`.
+No se deben introducir cambios nuevos de BD fuera de este mecanismo.
+
 Tablas actuales:
 
 - `users`
@@ -34,6 +44,8 @@ Tablas actuales:
 - `automation_rules`
 - `rule_connections`
 - `system_events`
+- `email_followups`
+- `organization_holidays`
 
 El modelo importante es:
 

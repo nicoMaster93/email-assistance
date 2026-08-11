@@ -1,13 +1,20 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Bell,
   Building2,
+  CheckCircle2,
+  Clock,
   Filter,
   Inbox,
+  Info,
   Link2,
   ListChecks,
   LogOut,
+  Mail,
   MessageCircle,
+  Eye,
+  EyeOff,
   Paperclip,
   Plus,
   RefreshCw,
@@ -16,36 +23,51 @@ import {
   Sparkles,
   Pencil,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import {
   Attachment,
   AutomationRule,
   AUTH_EXPIRED_EVENT,
+  createAccountAccess,
   createOrganization,
+  createManualFollowup,
+  createRootUser,
   createRule,
   deleteConnection,
   deleteOrganization,
   deleteRule,
+  EmailFollowup,
   EmailMessage,
+  evaluateFollowups,
+  getFollowupSummary,
   GoogleConnection,
   listAttachments,
   listEvents,
+  listFollowups,
   listMessages,
   listConnections,
   listOrganizations,
+  listRootUsers,
   listRules,
   login,
   Organization,
+  RootUser,
   startGoogleOAuth,
   startWhatsAppSetup,
   stopWatchConnection,
   syncConnection,
   SystemEvent,
   updateConnection,
+  updateConnectionFollowup,
   updateOrganization,
+  updateOrganizationBusinessHours,
+  updateProfile,
   updateRule,
+  updateRuleFollowup,
   updateRuleWhatsAppNotifications,
+  updateWhatsAppPreferences,
   User,
   watchConnection,
 } from "./services/api";
@@ -55,9 +77,66 @@ const DEMO_PASSWORD = "Demo123!";
 
 type AttachmentFilter = "all" | "with" | "without";
 type MainTab = "accounts" | "rules";
-type WorkTab = "emails" | "rules" | "attachments" | "events";
+type WorkTab = "emails" | "rules" | "attachments" | "events" | "followups";
 type RuleMode = "ai" | "manual";
 type WatchDuration = "1w" | "1m" | "3m" | "1y" | "custom";
+
+const BUSINESS_DAY_OPTIONS = [
+  [1, "Lun"],
+  [2, "Mar"],
+  [3, "Mie"],
+  [4, "Jue"],
+  [5, "Vie"],
+  [6, "Sab"],
+  [7, "Dom"],
+] as const;
+
+type BusinessDayHoursState = Record<
+  string,
+  {
+    enabled: boolean;
+    uses_default: boolean;
+    start_time: string | null;
+    end_time: string | null;
+  }
+>;
+
+function defaultBusinessDayHours(days: number[] = [1, 2, 3, 4, 5]) {
+  return BUSINESS_DAY_OPTIONS.reduce<BusinessDayHoursState>((accumulator, [day]) => {
+    accumulator[String(day)] = {
+      enabled: days.includes(day),
+      uses_default: true,
+      start_time: null,
+      end_time: null,
+    };
+    return accumulator;
+  }, {});
+}
+
+function ToggleRow({
+  checked,
+  description,
+  disabled,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  description?: string;
+  disabled?: boolean;
+  label: string;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className={`toggle-row ${disabled ? "disabled" : ""} ${!checked ? "off" : ""}`}>
+      <span>
+        <strong>{label}</strong>
+        {description && <small>{description}</small>}
+      </span>
+      <input checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} type="checkbox" />
+      <i aria-hidden="true" />
+    </label>
+  );
+}
 
 function formatDate(value: string | null) {
   if (!value) return "Sin fecha";
@@ -67,6 +146,214 @@ function formatDate(value: string | null) {
 function fileSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatMinutes(value: number | null) {
+  if (value === null || value === undefined) return "Sin dato";
+  if (value < 60) return `${value} min`;
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+function followupConfig(rule: AutomationRule) {
+  const config = rule.configuration?.followup;
+  if (!config || typeof config !== "object") {
+    return {
+      enabled: false,
+      response_time_minutes: 120,
+      notify_whatsapp_on_overdue: false,
+      warn_before_minutes: null as number | null,
+      escalation_minutes: null as number | null,
+    };
+  }
+  const typed = config as Record<string, unknown>;
+  return {
+    enabled: Boolean(typed.enabled),
+    response_time_minutes: Number(typed.response_time_minutes || 120),
+    notify_whatsapp_on_overdue: Boolean(typed.notify_whatsapp_on_overdue),
+    warn_before_minutes:
+      typed.warn_before_minutes === null || typed.warn_before_minutes === undefined ? null : Number(typed.warn_before_minutes),
+    escalation_minutes:
+      typed.escalation_minutes === null || typed.escalation_minutes === undefined
+        ? null
+        : Number(typed.escalation_minutes),
+  };
+}
+
+function followupStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: "Pendiente",
+    overdue: "Vencido",
+    responded: "Respondido",
+    responded_late: "Respondido tarde",
+    escalated: "Escalado",
+  };
+  return labels[status] || status;
+}
+
+function ignoreReasonLabel(value: string) {
+  const labels: Record<string, string> = {
+    no_active_rules_for_connection: "La cuenta no tenia reglas activas asociadas",
+    no_ai_rule_matched: "Ninguna regla con IA considero que el correo cumple",
+    no_rule_matched: "Ninguna regla asociada coincide con el correo",
+  };
+  return labels[value] || value;
+}
+
+function textFromMetadata(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "boolean") return value ? "Si" : "No";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return null;
+}
+
+function eventTone(event: SystemEvent) {
+  if (event.event_type.includes("ignored") || event.level === "warning") return "warning";
+  if (event.level === "error") return "danger";
+  if (
+    event.event_type.includes("matched") ||
+    event.event_type.includes("sent") ||
+    event.event_type.includes("synced") ||
+    event.event_type.includes("registered")
+  ) {
+    return "success";
+  }
+  return "neutral";
+}
+
+function eventTitle(event: SystemEvent) {
+  const subject = textFromMetadata(event.metadata?.subject);
+  if (
+    (event.event_type === "gmail_message_ignored" ||
+      event.event_type === "gmail_message_matched" ||
+      event.event_type === "gmail_message_deleted") &&
+    subject
+  ) {
+    return subject;
+  }
+  return event.message;
+}
+
+function eventSubtitle(event: SystemEvent) {
+  const sender = textFromMetadata(event.metadata?.sender);
+  const reason = textFromMetadata(event.metadata?.ignore_reason);
+  const matchedRule = textFromMetadata(event.metadata?.matched_rule_name);
+  if (event.event_type === "gmail_message_deleted" && sender) return `${sender} - El correo original fue eliminado en Gmail`;
+  if (sender && matchedRule) return `${sender} - Coincidio con ${matchedRule}`;
+  if (sender && reason) return `${sender} - ${ignoreReasonLabel(reason)}`;
+  if (sender) return sender;
+  return event.event_type;
+}
+
+function eventTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    gmail_message_ignored: "Correo descartado",
+    gmail_message_matched: "Correo sincronizado",
+    gmail_message_deleted: "Correo eliminado en Gmail",
+    gmail_history_synced: "Historial sincronizado",
+    gmail_pubsub_received: "Aviso de Gmail recibido",
+    gmail_watch_registered: "Monitor activado",
+    gmail_watch_stopped: "Monitor inactivado",
+    whatsapp_email_notification_sent: "WhatsApp enviado",
+    followup_whatsapp_warning_sent: "WhatsApp seguimiento por vencer",
+    followup_whatsapp_overdue_sent: "WhatsApp seguimiento vencido",
+    followup_whatsapp_escalation_sent: "WhatsApp seguimiento escalado",
+    followup_whatsapp_late_response_sent: "WhatsApp contestado tarde",
+    followup_whatsapp_response_sent: "WhatsApp respondido",
+  };
+  return labels[type] || type;
+}
+
+function ruleFieldLabel(field: string) {
+  const labels: Record<string, string> = {
+    sender_contains: "Remitente",
+    subject_contains: "Asunto",
+    has_attachment: "Adjuntos",
+    ai_description: "IA",
+  };
+  return labels[field] || field;
+}
+
+function matchTypeLabel(value: string | null) {
+  const labels: Record<string, string> = {
+    literal_email: "coincidencia exacta",
+    literal_normalized: "coincidencia normalizada",
+    token_fuzzy: "coincidencia flexible",
+    boolean: "validacion exacta",
+    no_match: "sin coincidencia",
+  };
+  return value ? labels[value] || value : "";
+}
+
+function eventDetailItems(event: SystemEvent) {
+  const metadata = event.metadata || {};
+  const pairs: Array<[string, string]> = [];
+  const sender = textFromMetadata(metadata.sender);
+  const recipients = textFromMetadata(metadata.recipients);
+  const receivedAt = textFromMetadata(metadata.received_at);
+  const deletedAt = textFromMetadata(metadata.deleted_at);
+  const gmailMessageId = textFromMetadata(metadata.gmail_message_id);
+  const hasAttachments = textFromMetadata(metadata.has_attachments);
+  const messageIdsFound = textFromMetadata(metadata.message_ids_found);
+  const stored = textFromMetadata(metadata.stored);
+  const ignored = textFromMetadata(metadata.ignored);
+  const attachmentsStored = textFromMetadata(metadata.attachments_stored);
+
+  if (sender) pairs.push(["De", sender]);
+  if (recipients) pairs.push(["Para", recipients]);
+  if (receivedAt) pairs.push(["Recibido", formatDate(receivedAt)]);
+  if (deletedAt) pairs.push(["Eliminado", formatDate(deletedAt)]);
+  if (hasAttachments) pairs.push(["Adjuntos", hasAttachments]);
+  if (gmailMessageId) pairs.push(["Gmail ID", gmailMessageId]);
+  if (messageIdsFound) pairs.push(["Encontrados", messageIdsFound]);
+  if (stored) pairs.push(["Sincronizados", stored]);
+  if (ignored) pairs.push(["Descartados", ignored]);
+  if (attachmentsStored) pairs.push(["Adjuntos guardados", attachmentsStored]);
+
+  return pairs;
+}
+
+function eventRuleDiagnostics(event: SystemEvent) {
+  const evaluatedRules = event.metadata?.evaluated_rules;
+  if (!Array.isArray(evaluatedRules)) return [];
+  return evaluatedRules
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const rule = item as Record<string, unknown>;
+      const ruleName = textFromMetadata(rule.rule_name) || `Regla ${textFromMetadata(rule.rule_id) || ""}`.trim();
+      const matched = Boolean(rule.matched);
+      const checks = Array.isArray(rule.checks)
+        ? rule.checks
+            .map((check) => {
+              if (!check || typeof check !== "object") return null;
+              const typed = check as Record<string, unknown>;
+              const field = textFromMetadata(typed.field);
+              const expected = textFromMetadata(typed.expected);
+              const passed = Boolean(typed.passed);
+              const matchType = textFromMetadata(typed.match_type);
+              if (!field || !expected) return null;
+              return {
+                label: ruleFieldLabel(field),
+                expected,
+                passed,
+                matchType: matchTypeLabel(matchType),
+              };
+            })
+            .filter(Boolean)
+        : [];
+
+      return {
+        ruleName,
+        matched,
+        checks,
+      };
+    })
+    .filter(Boolean) as Array<{
+      ruleName: string;
+      matched: boolean;
+      checks: Array<{ label: string; expected: string; passed: boolean; matchType: string }>;
+    }>;
 }
 
 function isWatchActive(connection: GoogleConnection) {
@@ -104,12 +391,14 @@ function watchDateForDuration(duration: WatchDuration, customValue: string) {
 export function App() {
   const [email, setEmail] = useState(DEMO_EMAIL);
   const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [showPassword, setShowPassword] = useState(false);
   const [token, setToken] = useState(() => localStorage.getItem("access_token") ?? "");
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem("user");
     return stored ? JSON.parse(stored) : null;
   });
   const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [rootUsers, setRootUsers] = useState<RootUser[]>([]);
   const [organizationsLoaded, setOrganizationsLoaded] = useState(false);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState(
     () => localStorage.getItem("selected_organization_id") ?? "",
@@ -117,6 +406,14 @@ export function App() {
   const [isOrganizationModalOpen, setIsOrganizationModalOpen] = useState(false);
   const [editingOrganization, setEditingOrganization] = useState<Organization | null>(null);
   const [organizationName, setOrganizationName] = useState("");
+  const [isBusinessHoursModalOpen, setIsBusinessHoursModalOpen] = useState(false);
+  const [businessTimezone, setBusinessTimezone] = useState("America/Bogota");
+  const [businessDays, setBusinessDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [businessStartTime, setBusinessStartTime] = useState("08:00");
+  const [businessEndTime, setBusinessEndTime] = useState("18:00");
+  const [businessDayHours, setBusinessDayHours] = useState<BusinessDayHoursState>(() => defaultBusinessDayHours());
+  const [holidayCountry, setHolidayCountry] = useState("CO");
+  const [businessHoursMessage, setBusinessHoursMessage] = useState("");
   const [watchConnectionTarget, setWatchConnectionTarget] = useState<GoogleConnection | null>(null);
   const [watchDuration, setWatchDuration] = useState<WatchDuration>("1m");
   const [customWatchUntil, setCustomWatchUntil] = useState(defaultWatchUntil);
@@ -124,22 +421,63 @@ export function App() {
   const [whatsAppConnectionTarget, setWhatsAppConnectionTarget] = useState<GoogleConnection | null>(null);
   const [whatsAppNumber, setWhatsAppNumber] = useState("");
   const [whatsAppModalMessage, setWhatsAppModalMessage] = useState("");
+  const [whatsAppNotificationsEnabled, setWhatsAppNotificationsEnabled] = useState(true);
+  const [whatsAppNotifyNewEmail, setWhatsAppNotifyNewEmail] = useState(true);
+  const [whatsAppNotifyFollowupOverdue, setWhatsAppNotifyFollowupOverdue] = useState(true);
+  const [whatsAppNotifyFollowupWarning, setWhatsAppNotifyFollowupWarning] = useState(true);
+  const [whatsAppNotifyFollowupLate, setWhatsAppNotifyFollowupLate] = useState(true);
+  const [whatsAppNotifyFollowupResponded, setWhatsAppNotifyFollowupResponded] = useState(true);
   const [ruleWhatsAppTarget, setRuleWhatsAppTarget] = useState<AutomationRule | null>(null);
   const [ruleWhatsAppConnectionIds, setRuleWhatsAppConnectionIds] = useState<number[]>([]);
   const [ruleWhatsAppMessage, setRuleWhatsAppMessage] = useState("");
+  const [ruleFollowupTarget, setRuleFollowupTarget] = useState<AutomationRule | null>(null);
+  const [ruleFollowupEnabled, setRuleFollowupEnabled] = useState(false);
+  const [ruleFollowupHours, setRuleFollowupHours] = useState("2");
+  const [ruleFollowupNotifyWhatsApp, setRuleFollowupNotifyWhatsApp] = useState(false);
+  const [ruleFollowupWarnMinutes, setRuleFollowupWarnMinutes] = useState("");
+  const [ruleFollowupEscalationMinutes, setRuleFollowupEscalationMinutes] = useState("");
+  const [ruleFollowupMessage, setRuleFollowupMessage] = useState("");
+  const [accountFollowupTarget, setAccountFollowupTarget] = useState<GoogleConnection | null>(null);
+  const [accountFollowupEnabled, setAccountFollowupEnabled] = useState(false);
+  const [accountFollowupHours, setAccountFollowupHours] = useState("2");
+  const [accountFollowupNotifyWhatsApp, setAccountFollowupNotifyWhatsApp] = useState(false);
+  const [accountFollowupWarnMinutes, setAccountFollowupWarnMinutes] = useState("");
+  const [accountFollowupEscalationMinutes, setAccountFollowupEscalationMinutes] = useState("");
+  const [accountFollowupMessage, setAccountFollowupMessage] = useState("");
+  const [manualFollowupTarget, setManualFollowupTarget] = useState<EmailMessage | null>(null);
+  const [manualFollowupHours, setManualFollowupHours] = useState("2");
+  const [manualFollowupNotifyWhatsApp, setManualFollowupNotifyWhatsApp] = useState(false);
+  const [manualFollowupWarnMinutes, setManualFollowupWarnMinutes] = useState("");
+  const [manualFollowupEscalationMinutes, setManualFollowupEscalationMinutes] = useState("");
+  const [manualFollowupMessage, setManualFollowupMessage] = useState("");
+  const [followupSummary, setFollowupSummary] = useState<{ totals: Record<string, number>; avg_response_minutes: number | null } | null>(null);
   const [editingRule, setEditingRule] = useState<AutomationRule | null>(null);
   const [connections, setConnections] = useState<GoogleConnection[]>([]);
   const [messages, setMessages] = useState<EmailMessage[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [rules, setRules] = useState<AutomationRule[]>([]);
+  const [followups, setFollowups] = useState<EmailFollowup[]>([]);
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [activeMainTab, setActiveMainTab] = useState<MainTab>("accounts");
   const [activePanel, setActivePanel] = useState<WorkTab>("emails");
   const [ruleMode, setRuleMode] = useState<RuleMode>("ai");
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<GoogleConnection | null>(null);
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [newAccountName, setNewAccountName] = useState("");
   const [newAccountPurpose, setNewAccountPurpose] = useState("");
+  const [newAccountUserEmail, setNewAccountUserEmail] = useState("");
+  const [newAccountPassword, setNewAccountPassword] = useState("");
+  const [accountModalMessage, setAccountModalMessage] = useState("");
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileName, setProfileName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profilePassword, setProfilePassword] = useState("");
+  const [profileMessage, setProfileMessage] = useState("");
+  const [rootUserName, setRootUserName] = useState("");
+  const [rootUserEmail, setRootUserEmail] = useState("");
+  const [rootUserPassword, setRootUserPassword] = useState("");
+  const [rootUserMessage, setRootUserMessage] = useState("");
   const [isEditingConnection, setIsEditingConnection] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPurpose, setEditPurpose] = useState("");
@@ -156,12 +494,20 @@ export function App() {
   const [query, setQuery] = useState("");
   const [selectedConnectionId, setSelectedConnectionId] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [followupStatusFilter, setFollowupStatusFilter] = useState("all");
+  const [eventTypeFilter, setEventTypeFilter] = useState("business");
+  const [eventDateFrom, setEventDateFrom] = useState("");
+  const [eventDateTo, setEventDateTo] = useState("");
+  const [eventLimit, setEventLimit] = useState("100");
   const [attachmentFilter, setAttachmentFilter] = useState<AttachmentFilter>("all");
   const [showFilters, setShowFilters] = useState(false);
 
   const isLoggedIn = useMemo(() => Boolean(token && user), [token, user]);
   const selectedOrganization =
     organizations.find((organization) => String(organization.id) === selectedOrganizationId) ?? null;
+  const isSuperRoot = user?.role === "super_root" || user?.platform_role === "super_root";
+  const isOwner = user?.role === "owner" || selectedOrganization?.role === "owner";
+  const isAccountUser = user?.role === "account_user" || selectedOrganization?.role === "account_user";
   const selectedConnection = connections.find((connection) => String(connection.id) === selectedConnectionId) ?? null;
   const visibleAttachments = selectedConnection
     ? attachments.filter((item) => item.google_connection_id === selectedConnection.id)
@@ -172,6 +518,10 @@ export function App() {
   const visibleEvents = selectedConnection
     ? events.filter((event) => event.google_connection_id === selectedConnection.id)
     : events;
+  const visibleFollowups = (selectedConnection
+    ? followups.filter((followup) => followup.google_connection_id === selectedConnection.id)
+    : followups
+  ).filter((followup) => followupStatusFilter === "all" || followup.status === followupStatusFilter);
 
   useEffect(() => {
     if (!token) return;
@@ -205,24 +555,86 @@ export function App() {
     setIsEditingConnection(false);
   }, [selectedConnectionId, selectedConnection?.display_name, selectedConnection?.purpose, selectedConnection?.email]);
 
+  useEffect(() => {
+    if (!isOwner && !["emails", "rules", "attachments"].includes(activePanel)) {
+      setActivePanel("emails");
+    }
+  }, [activePanel, isOwner]);
+
   async function refreshConnections(activeToken = token) {
     try {
-      setConnections(await listConnections(activeToken));
+      const loadedConnections = await listConnections(activeToken);
+      setConnections(loadedConnections);
+      if ((user?.role === "account_user" || selectedOrganization?.role === "account_user") && loadedConnections.length > 0) {
+        setSelectedConnectionId(String(loadedConnections[0].id));
+      }
       setMessages(await listMessages(activeToken));
       setAttachments(await listAttachments(activeToken));
       setRules(await listRules(activeToken));
-      setEvents(await listEvents(activeToken));
+      if (user?.role === "owner" || selectedOrganization?.role === "owner") {
+        setFollowups(await listFollowups(activeToken));
+        setFollowupSummary(await getFollowupSummary(activeToken));
+        setEvents(await listEvents(activeToken, { event_type: "business", limit: 100 }));
+      } else {
+        setFollowups([]);
+        setFollowupSummary(null);
+        setEvents([]);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudieron cargar las cuentas");
     }
   }
 
+  async function refreshEventsWithFilters(activeToken = token) {
+    try {
+      setLoading(true);
+      setEvents(
+        await listEvents(activeToken, {
+          connection_id: selectedConnection?.id,
+          event_type: eventTypeFilter === "all" ? undefined : eventTypeFilter,
+          date_from: eventDateFrom,
+          date_to: eventDateTo,
+          limit: Number(eventLimit || 100),
+        }),
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron cargar los eventos");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function clearEventFilters() {
+    setEventTypeFilter("business");
+    setEventDateFrom("");
+    setEventDateTo("");
+    setEventLimit("100");
+    try {
+      setEvents(await listEvents(token, { connection_id: selectedConnection?.id, event_type: "business", limit: 100 }));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron cargar los eventos");
+    }
+  }
+
   async function refreshOrganizations(activeToken = token) {
     try {
+      if (user?.role === "super_root" || user?.platform_role === "super_root") {
+        setRootUsers(await listRootUsers(activeToken));
+        setOrganizations([]);
+        setSelectedOrganizationId("");
+        localStorage.removeItem("selected_organization_id");
+        return;
+      }
       const items = await listOrganizations(activeToken);
       setOrganizations(items);
       const storedOrganizationId = localStorage.getItem("selected_organization_id");
       const storedStillExists = items.some((organization) => String(organization.id) === storedOrganizationId);
+      if (items.length === 1 && items[0].role === "account_user") {
+        setSelectedOrganizationId(String(items[0].id));
+        localStorage.setItem("selected_organization_id", String(items[0].id));
+        setUser((current) => (current ? { ...current, organization_id: items[0].id, role: items[0].role } : current));
+        return;
+      }
       if (storedOrganizationId && storedStillExists) {
         setSelectedOrganizationId(storedOrganizationId);
       } else {
@@ -233,6 +645,14 @@ export function App() {
       setMessage(error instanceof Error ? error.message : "No se pudieron cargar las organizaciones");
     } finally {
       setOrganizationsLoaded(true);
+    }
+  }
+
+  async function refreshRootUsers(activeToken = token) {
+    try {
+      setRootUsers(await listRootUsers(activeToken));
+    } catch (error) {
+      setRootUserMessage(error instanceof Error ? error.message : "No se pudieron cargar los usuarios root");
     }
   }
 
@@ -284,6 +704,21 @@ export function App() {
 
   const activeRules = rules.filter((rule) => rule.is_active).length;
   const statusOptions = Array.from(new Set(messages.map((emailMessage) => emailMessage.status))).filter(Boolean);
+  const followupStatusOptions = Array.from(new Set(followups.map((followup) => followup.status))).filter(Boolean);
+  const eventTypeOptions = [
+    ["business", "Actividad util"],
+    ["all", "Todos los eventos"],
+    ["gmail_message_matched", "Correos sincronizados"],
+    ["gmail_message_ignored", "Correos descartados"],
+    ["gmail_message_deleted", "Eliminados en Gmail"],
+    ["gmail_pubsub_received", "Avisos Pub/Sub"],
+    ["gmail_history_synced", "Historial sincronizado"],
+    ["whatsapp_email_notification_sent", "WhatsApp enviados"],
+    ["followup_whatsapp_warning_sent", "WhatsApp por vencer"],
+    ["followup_whatsapp_overdue_sent", "WhatsApp vencidos"],
+    ["followup_whatsapp_late_response_sent", "WhatsApp contestados tarde"],
+    ["followup_whatsapp_response_sent", "WhatsApp respondidos"],
+  ];
 
   function clearSession(expiredMessage?: string) {
     setToken("");
@@ -295,6 +730,8 @@ export function App() {
     setMessages([]);
     setAttachments([]);
     setRules([]);
+    setFollowups([]);
+    setFollowupSummary(null);
     setEvents([]);
     localStorage.removeItem("access_token");
     localStorage.removeItem("user");
@@ -391,6 +828,8 @@ export function App() {
     setMessages([]);
     setAttachments([]);
     setRules([]);
+    setFollowups([]);
+    setFollowupSummary(null);
     setEvents([]);
     await refreshConnections();
   }
@@ -403,6 +842,8 @@ export function App() {
     setMessages([]);
     setAttachments([]);
     setRules([]);
+    setFollowups([]);
+    setFollowupSummary(null);
     setEvents([]);
   }
 
@@ -424,12 +865,101 @@ export function App() {
         setMessages([]);
         setAttachments([]);
         setRules([]);
+        setFollowups([]);
+        setFollowupSummary(null);
         setEvents([]);
       }
       await refreshOrganizations();
       setMessage("Organizacion eliminada.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo eliminar la organizacion");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openBusinessHoursModal() {
+    if (!selectedOrganization) return;
+    setBusinessTimezone(selectedOrganization.business_timezone || "America/Bogota");
+    const selectedDays = selectedOrganization.business_days?.length ? selectedOrganization.business_days : [1, 2, 3, 4, 5];
+    setBusinessDays(selectedDays);
+    setBusinessStartTime(selectedOrganization.business_start_time || "08:00");
+    setBusinessEndTime(selectedOrganization.business_end_time || "18:00");
+    setBusinessDayHours({
+      ...defaultBusinessDayHours(selectedDays),
+      ...(selectedOrganization.business_day_hours || {}),
+    });
+    setHolidayCountry(selectedOrganization.holiday_country || "CO");
+    setBusinessHoursMessage("");
+    setIsBusinessHoursModalOpen(true);
+  }
+
+  function closeBusinessHoursModal() {
+    setIsBusinessHoursModalOpen(false);
+    setBusinessHoursMessage("");
+  }
+
+  function toggleBusinessDay(day: number) {
+    setBusinessDays((current) =>
+      current.includes(day) ? current.filter((value) => value !== day) : [...current, day].sort((left, right) => left - right),
+    );
+    setBusinessDayHours((current) => ({
+      ...current,
+      [String(day)]: {
+        ...(current[String(day)] || { uses_default: true, start_time: null, end_time: null }),
+        enabled: !(current[String(day)]?.enabled ?? businessDays.includes(day)),
+      },
+    }));
+  }
+
+  function updateBusinessDayHour(day: number, patch: Partial<BusinessDayHoursState[string]>) {
+    setBusinessDayHours((current) => {
+      const existing = current[String(day)] || {
+        enabled: businessDays.includes(day),
+        uses_default: true,
+        start_time: null,
+        end_time: null,
+      };
+      return {
+        ...current,
+        [String(day)]: {
+          ...existing,
+          ...patch,
+        },
+      };
+    });
+  }
+
+  async function handleSaveBusinessHours(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedOrganization) return;
+    const enabledDays = BUSINESS_DAY_OPTIONS.filter(([day]) => businessDayHours[String(day)]?.enabled).map(([day]) => day);
+    if (!enabledDays.length) {
+      setBusinessHoursMessage("Selecciona al menos un dia habil.");
+      return;
+    }
+    if (businessStartTime >= businessEndTime) {
+      setBusinessHoursMessage("La hora de inicio debe ser menor que la hora de fin.");
+      return;
+    }
+
+    setLoading(true);
+    setBusinessHoursMessage("");
+    try {
+      const saved = await updateOrganizationBusinessHours(token, selectedOrganization.id, {
+        business_timezone: businessTimezone,
+        business_days: enabledDays,
+        business_start_time: businessStartTime,
+        business_end_time: businessEndTime,
+        business_day_hours: businessDayHours,
+        holiday_country: holidayCountry.trim().toUpperCase() || "CO",
+      });
+      setOrganizations((current) => current.map((organization) => (organization.id === saved.id ? saved : organization)));
+      setMessage("Horario de seguimiento actualizado.");
+      closeBusinessHoursModal();
+      await refreshOrganizations();
+    } catch (error) {
+      setBusinessHoursMessage(error instanceof Error ? error.message : "No se pudo actualizar el horario de seguimiento");
     } finally {
       setLoading(false);
     }
@@ -446,7 +976,13 @@ export function App() {
       setUser(response.user);
       localStorage.setItem("access_token", response.access_token);
       localStorage.setItem("user", JSON.stringify(response.user));
-      await refreshOrganizations(response.access_token);
+      if (response.user.role === "super_root" || response.user.platform_role === "super_root") {
+        setRootUsers(await listRootUsers(response.access_token));
+        setOrganizations([]);
+        setOrganizationsLoaded(true);
+      } else {
+        await refreshOrganizations(response.access_token);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo iniciar sesion");
     } finally {
@@ -457,28 +993,199 @@ export function App() {
   async function handleStartGoogleOAuth(event?: FormEvent) {
     event?.preventDefault();
     if (!newAccountName.trim()) {
-      setMessage("Escribe un nombre para identificar la cuenta.");
+      setAccountModalMessage("Escribe un nombre para identificar la cuenta.");
+      return;
+    }
+    if (!newAccountUserEmail.trim()) {
+      setAccountModalMessage("Escribe el usuario que entrara a vincular esta cuenta.");
+      return;
+    }
+    if (newAccountPassword.length < 6) {
+      setAccountModalMessage("La contrasena debe tener al menos 6 caracteres.");
       return;
     }
 
     setLoading(true);
-    setMessage("");
+    setAccountModalMessage("");
 
     try {
-      const response = await startGoogleOAuth(token, {
+      const account = await createAccountAccess(token, {
         display_name: newAccountName.trim(),
         purpose: newAccountPurpose.trim(),
+        user_email: newAccountUserEmail.trim(),
+        password: newAccountPassword,
+      });
+      const response = await startGoogleOAuth(token, {
+        connection_id: account.id,
       });
       window.location.href = response.authorization_url;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo iniciar OAuth con Google");
+      setAccountModalMessage(error instanceof Error ? error.message : "No se pudo iniciar OAuth con Google");
+      setLoading(false);
+    }
+  }
+
+  function openAccountModal(connection?: GoogleConnection) {
+    setEditingAccount(connection || null);
+    setNewAccountName(connection?.display_name || "");
+    setNewAccountPurpose(connection?.purpose || "");
+    setNewAccountUserEmail(connection?.assigned_user_email || "");
+    setNewAccountPassword("");
+    setAccountModalMessage("");
+    setIsAccountModalOpen(true);
+  }
+
+  async function handleSaveEditedAccount(event?: FormEvent, linkAfterSave = false) {
+    event?.preventDefault();
+    if (!editingAccount) return;
+    if (!newAccountName.trim()) {
+      setAccountModalMessage("Escribe un nombre para identificar la cuenta.");
+      return;
+    }
+    if (!newAccountUserEmail.trim()) {
+      setAccountModalMessage("Escribe el usuario de acceso.");
+      return;
+    }
+    if (newAccountPassword && newAccountPassword.length < 6) {
+      setAccountModalMessage("La contrasena debe tener al menos 6 caracteres.");
+      return;
+    }
+
+    setLoading(true);
+    setAccountModalMessage("");
+    try {
+      const saved = await updateConnection(token, editingAccount.id, {
+        display_name: newAccountName.trim(),
+        purpose: newAccountPurpose.trim(),
+        user_email: newAccountUserEmail.trim(),
+        password: newAccountPassword || undefined,
+      });
+      if (linkAfterSave) {
+        const response = await startGoogleOAuth(token, { connection_id: saved.id });
+        window.location.href = response.authorization_url;
+        return;
+      }
+      resetAccountModal();
+      setMessage("Cuenta actualizada.");
+      await refreshConnections();
+    } catch (error) {
+      setAccountModalMessage(error instanceof Error ? error.message : "No se pudo actualizar la cuenta");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateAccountAccess() {
+    if (!newAccountName.trim()) {
+      setAccountModalMessage("Escribe un nombre para identificar la cuenta.");
+      return;
+    }
+    if (!newAccountUserEmail.trim()) {
+      setAccountModalMessage("Escribe el usuario de acceso.");
+      return;
+    }
+    if (newAccountPassword.length < 6) {
+      setAccountModalMessage("La contrasena debe tener al menos 6 caracteres.");
+      return;
+    }
+
+    setLoading(true);
+    setAccountModalMessage("");
+    try {
+      await createAccountAccess(token, {
+        display_name: newAccountName.trim(),
+        purpose: newAccountPurpose.trim(),
+        user_email: newAccountUserEmail.trim(),
+        password: newAccountPassword,
+      });
+      resetAccountModal();
+      setMessage("Acceso creado. El usuario ya puede ingresar y vincular su cuenta Google.");
+      await refreshConnections();
+    } catch (error) {
+      setAccountModalMessage(error instanceof Error ? error.message : "No se pudo crear el acceso");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLinkSelectedAccount(connectionId?: number) {
+    const targetId = connectionId || selectedConnection?.id;
+    if (!targetId) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await startGoogleOAuth(token, { connection_id: targetId });
+      window.location.href = response.authorization_url;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo iniciar la vinculacion con Google");
+      setLoading(false);
+    }
+  }
+
+  function openProfileModal() {
+    setProfileName(activeUser.name || "");
+    setProfileEmail(activeUser.email || "");
+    setProfilePassword("");
+    setProfileMessage("");
+    setIsProfileModalOpen(true);
+  }
+
+  async function handleSaveProfile(event: FormEvent) {
+    event.preventDefault();
+    setLoading(true);
+    setProfileMessage("");
+    try {
+      const updated = await updateProfile(token, {
+        name: profileName.trim(),
+        email: profileEmail.trim(),
+        password: profilePassword || undefined,
+      });
+      const nextUser = { ...activeUser, ...updated };
+      setUser(nextUser);
+      localStorage.setItem("user", JSON.stringify(nextUser));
+      setIsProfileModalOpen(false);
+      setMessage("Perfil actualizado.");
+    } catch (error) {
+      setProfileMessage(error instanceof Error ? error.message : "No se pudo actualizar el perfil");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateRootUser(event: FormEvent) {
+    event.preventDefault();
+    if (!rootUserName.trim() || !rootUserEmail.trim() || !rootUserPassword) {
+      setRootUserMessage("Completa nombre, correo y contrasena.");
+      return;
+    }
+
+    setLoading(true);
+    setRootUserMessage("");
+    try {
+      await createRootUser(token, {
+        name: rootUserName.trim(),
+        email: rootUserEmail.trim(),
+        password: rootUserPassword,
+      });
+      setRootUserName("");
+      setRootUserEmail("");
+      setRootUserPassword("");
+      setRootUserMessage("Usuario root creado.");
+      await refreshRootUsers();
+    } catch (error) {
+      setRootUserMessage(error instanceof Error ? error.message : "No se pudo crear el usuario root");
+    } finally {
       setLoading(false);
     }
   }
 
   function resetAccountModal() {
+    setEditingAccount(null);
     setNewAccountName("");
     setNewAccountPurpose("");
+    setNewAccountUserEmail("");
+    setNewAccountPassword("");
+    setAccountModalMessage("");
     setIsAccountModalOpen(false);
   }
 
@@ -500,7 +1207,7 @@ export function App() {
   }
 
   async function handleSyncConnection(id: number) {
-    if (connectionRuleCount(id) === 0) {
+    if (isOwner && connectionRuleCount(id) === 0) {
       setMessage("Antes de sincronizar, la cuenta debe tener al menos una regla activa asociada.");
       return;
     }
@@ -591,12 +1298,50 @@ export function App() {
   function openWhatsAppModal(connection: GoogleConnection) {
     setWhatsAppConnectionTarget(connection);
     setWhatsAppNumber(connection.whatsapp_number || "");
+    setWhatsAppNotificationsEnabled(connection.whatsapp_notifications_enabled);
+    setWhatsAppNotifyNewEmail(connection.whatsapp_notify_new_email);
+    setWhatsAppNotifyFollowupOverdue(connection.whatsapp_notify_followup_overdue);
+    setWhatsAppNotifyFollowupWarning(connection.whatsapp_notify_followup_warning);
+    setWhatsAppNotifyFollowupLate(connection.whatsapp_notify_followup_late);
+    setWhatsAppNotifyFollowupResponded(connection.whatsapp_notify_followup_responded);
     setWhatsAppModalMessage("");
   }
 
   function closeWhatsAppModal() {
     setWhatsAppConnectionTarget(null);
     setWhatsAppModalMessage("");
+  }
+
+  function setAllWhatsAppNotifications(value: boolean) {
+    setWhatsAppNotificationsEnabled(value);
+    setWhatsAppNotifyNewEmail(value);
+    setWhatsAppNotifyFollowupOverdue(value);
+    setWhatsAppNotifyFollowupWarning(value);
+    setWhatsAppNotifyFollowupLate(value);
+    setWhatsAppNotifyFollowupResponded(value);
+  }
+
+  async function handleSaveWhatsAppPreferences() {
+    if (!whatsAppConnectionTarget) return;
+    setLoading(true);
+    setWhatsAppModalMessage("");
+    try {
+      await updateWhatsAppPreferences(token, whatsAppConnectionTarget.id, {
+        notifications_enabled: whatsAppNotificationsEnabled,
+        notify_new_email: whatsAppNotifyNewEmail,
+        notify_followup_overdue: whatsAppNotifyFollowupOverdue,
+        notify_followup_warning: whatsAppNotifyFollowupWarning,
+        notify_followup_late: whatsAppNotifyFollowupLate,
+        notify_followup_responded: whatsAppNotifyFollowupResponded,
+      });
+      setMessage("Preferencias de WhatsApp actualizadas.");
+      closeWhatsAppModal();
+      await refreshConnections();
+    } catch (error) {
+      setWhatsAppModalMessage(error instanceof Error ? error.message : "No se pudieron guardar las preferencias");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleSubmitWhatsApp(event: FormEvent) {
@@ -827,6 +1572,157 @@ export function App() {
     }
   }
 
+  function openRuleFollowupModal(rule: AutomationRule) {
+    const config = followupConfig(rule);
+    setRuleFollowupTarget(rule);
+    setRuleFollowupEnabled(config.enabled);
+    setRuleFollowupHours(String(Math.max(1, Math.round(config.response_time_minutes / 60))));
+    setRuleFollowupNotifyWhatsApp(config.notify_whatsapp_on_overdue);
+    setRuleFollowupWarnMinutes(config.warn_before_minutes ? String(config.warn_before_minutes) : "");
+    setRuleFollowupEscalationMinutes(config.escalation_minutes ? String(config.escalation_minutes) : "");
+    setRuleFollowupMessage("");
+  }
+
+  function closeRuleFollowupModal() {
+    setRuleFollowupTarget(null);
+    setRuleFollowupMessage("");
+  }
+
+  async function handleSaveRuleFollowup(event: FormEvent) {
+    event.preventDefault();
+    if (!ruleFollowupTarget) return;
+    const hours = Number(ruleFollowupHours);
+    if (!Number.isFinite(hours) || hours <= 0) {
+      setRuleFollowupMessage("Define un tiempo maximo de respuesta valido.");
+      return;
+    }
+
+    setLoading(true);
+    setRuleFollowupMessage("");
+    try {
+      await updateRuleFollowup(token, ruleFollowupTarget.id, {
+        enabled: ruleFollowupEnabled,
+        response_time_minutes: Math.round(hours * 60),
+        notify_whatsapp_on_overdue: ruleFollowupNotifyWhatsApp,
+        warn_before_minutes: ruleFollowupWarnMinutes ? Number(ruleFollowupWarnMinutes) : null,
+        escalation_minutes: ruleFollowupEscalationMinutes ? Number(ruleFollowupEscalationMinutes) : null,
+      });
+      setMessage("Seguimiento de regla actualizado.");
+      closeRuleFollowupModal();
+      await refreshConnections();
+    } catch (error) {
+      setRuleFollowupMessage(error instanceof Error ? error.message : "No se pudo actualizar el seguimiento");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openAccountFollowupModal(connection: GoogleConnection) {
+    setAccountFollowupTarget(connection);
+    setAccountFollowupEnabled(connection.followup_enabled);
+    setAccountFollowupHours(String(Math.max(1, Math.round(connection.followup_response_time_minutes / 60))));
+    setAccountFollowupNotifyWhatsApp(connection.followup_notify_whatsapp_on_overdue);
+    setAccountFollowupWarnMinutes(connection.followup_warn_before_minutes ? String(connection.followup_warn_before_minutes) : "");
+    setAccountFollowupEscalationMinutes(connection.followup_escalation_minutes ? String(connection.followup_escalation_minutes) : "");
+    setAccountFollowupMessage("");
+  }
+
+  function closeAccountFollowupModal() {
+    setAccountFollowupTarget(null);
+    setAccountFollowupWarnMinutes("");
+    setAccountFollowupEscalationMinutes("");
+    setAccountFollowupMessage("");
+  }
+
+  async function handleSaveAccountFollowup(event: FormEvent) {
+    event.preventDefault();
+    if (!accountFollowupTarget) return;
+    const hours = Number(accountFollowupHours);
+    if (!Number.isFinite(hours) || hours <= 0) {
+      setAccountFollowupMessage("Define un tiempo maximo de respuesta valido.");
+      return;
+    }
+
+    setLoading(true);
+    setAccountFollowupMessage("");
+    try {
+      await updateConnectionFollowup(token, accountFollowupTarget.id, {
+        enabled: accountFollowupEnabled,
+        response_time_minutes: Math.round(hours * 60),
+        notify_whatsapp_on_overdue: accountFollowupNotifyWhatsApp,
+        warn_before_minutes: accountFollowupWarnMinutes ? Number(accountFollowupWarnMinutes) : null,
+        escalation_minutes: accountFollowupEscalationMinutes ? Number(accountFollowupEscalationMinutes) : null,
+      });
+      setMessage("Seguimiento por cuenta actualizado.");
+      closeAccountFollowupModal();
+      await refreshConnections();
+    } catch (error) {
+      setAccountFollowupMessage(error instanceof Error ? error.message : "No se pudo actualizar el seguimiento de cuenta");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openManualFollowupModal(emailMessage: EmailMessage) {
+    setManualFollowupTarget(emailMessage);
+    setManualFollowupHours("2");
+    setManualFollowupNotifyWhatsApp(false);
+    setManualFollowupWarnMinutes("");
+    setManualFollowupEscalationMinutes("");
+    setManualFollowupMessage("");
+  }
+
+  function closeManualFollowupModal() {
+    setManualFollowupTarget(null);
+    setManualFollowupWarnMinutes("");
+    setManualFollowupEscalationMinutes("");
+    setManualFollowupMessage("");
+  }
+
+  async function handleCreateManualFollowup(event: FormEvent) {
+    event.preventDefault();
+    if (!manualFollowupTarget) return;
+    const hours = Number(manualFollowupHours);
+    if (!Number.isFinite(hours) || hours <= 0) {
+      setManualFollowupMessage("Define un tiempo maximo de respuesta valido.");
+      return;
+    }
+
+    setLoading(true);
+    setManualFollowupMessage("");
+    try {
+      await createManualFollowup(token, {
+        email_message_id: manualFollowupTarget.id,
+        response_time_minutes: Math.round(hours * 60),
+        notify_whatsapp_on_overdue: manualFollowupNotifyWhatsApp,
+        warn_before_minutes: manualFollowupWarnMinutes ? Number(manualFollowupWarnMinutes) : null,
+        escalation_minutes: manualFollowupEscalationMinutes ? Number(manualFollowupEscalationMinutes) : null,
+      });
+      setMessage("Seguimiento creado para el correo.");
+      closeManualFollowupModal();
+      await refreshConnections();
+      setActivePanel("followups");
+    } catch (error) {
+      setManualFollowupMessage(error instanceof Error ? error.message : "No se pudo crear el seguimiento");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleEvaluateFollowups() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const result = await evaluateFollowups(token, selectedConnection?.id);
+      setMessage(`Seguimientos evaluados: ${result.evaluated}. Respondidos: ${result.responded}. Vencidos: ${result.overdue}.`);
+      await refreshConnections();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron evaluar los seguimientos");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (!isLoggedIn) {
     return (
       <main className="auth-shell">
@@ -844,7 +1740,18 @@ export function App() {
             </label>
             <label>
               Password
-              <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" />
+              <span className="password-field">
+                <input value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} />
+                <button
+                  aria-label={showPassword ? "Ocultar contrasena" : "Mostrar contrasena"}
+                  className="password-toggle"
+                  onClick={() => setShowPassword((current) => !current)}
+                  title={showPassword ? "Ocultar contrasena" : "Mostrar contrasena"}
+                  type="button"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </span>
             </label>
             {message && <p className="message">{message}</p>}
             <button disabled={loading} type="submit">
@@ -858,6 +1765,121 @@ export function App() {
   }
 
   const activeUser = user!;
+  const profileModal = isProfileModalOpen ? (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Mi perfil</p>
+            <h2 id="profile-modal-title">Datos personales y acceso</h2>
+          </div>
+          <button className="icon-button" onClick={() => setIsProfileModalOpen(false)} title="Cerrar" type="button">
+            <X size={18} />
+          </button>
+        </div>
+        <form className="modal-form" onSubmit={handleSaveProfile}>
+          {profileMessage && <p className="message modal-message">{profileMessage}</p>}
+          <label>
+            Nombre
+            <input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Tu nombre" />
+          </label>
+          <label>
+            Correo de acceso
+            <input value={profileEmail} onChange={(event) => setProfileEmail(event.target.value)} placeholder="correo@empresa.com" type="email" />
+          </label>
+          <label>
+            Nueva contrasena
+            <input
+              value={profilePassword}
+              onChange={(event) => setProfilePassword(event.target.value)}
+              placeholder="Dejalo vacio para conservarla"
+              type="password"
+            />
+          </label>
+          <button disabled={loading} type="submit">
+            <UserRound size={18} />
+            Guardar perfil
+          </button>
+        </form>
+      </section>
+    </div>
+  ) : null;
+
+  if (isSuperRoot) {
+    return (
+      <main className="app-shell organization-shell">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Email Assistance</p>
+            <h1>Panel master</h1>
+            <p className="muted">Crea usuarios root. Cada root administra un espacio aislado con sus propias organizaciones.</p>
+          </div>
+          <div className="session">
+            <span>{activeUser.email}</span>
+            <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
+              <UserRound size={18} />
+            </button>
+            <button className="icon-button" onClick={handleLogout} title="Cerrar sesion">
+              <LogOut size={18} />
+            </button>
+          </div>
+        </header>
+
+        <section className="master-layout">
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Usuarios root</p>
+                <h2>Crear nuevo root</h2>
+                <p className="muted">Este usuario podra crear sus organizaciones, cuentas, reglas y configuraciones.</p>
+              </div>
+            </div>
+            <form className="modal-form" onSubmit={handleCreateRootUser}>
+              {rootUserMessage && <p className="message modal-message">{rootUserMessage}</p>}
+              <label>
+                Nombre
+                <input value={rootUserName} onChange={(event) => setRootUserName(event.target.value)} placeholder="Administrador cliente" />
+              </label>
+              <label>
+                Correo
+                <input value={rootUserEmail} onChange={(event) => setRootUserEmail(event.target.value)} placeholder="admin@cliente.com" type="email" />
+              </label>
+              <label>
+                Contrasena
+                <input value={rootUserPassword} onChange={(event) => setRootUserPassword(event.target.value)} placeholder="Clave inicial" type="password" />
+              </label>
+              <button disabled={loading} type="submit">
+                <UserRound size={18} />
+                Crear root
+              </button>
+            </form>
+          </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Roots activos</p>
+                <h2>Usuarios administradores</h2>
+              </div>
+            </div>
+            <div className="rules-table-list">
+              {rootUsers.map((rootUser) => (
+                <article className="rule-row" key={rootUser.id}>
+                  <div>
+                    <strong>{rootUser.name}</strong>
+                    <span>{rootUser.email}</span>
+                  </div>
+                  <span className="status">{rootUser.platform_role}</span>
+                </article>
+              ))}
+              {rootUsers.length === 0 && <div className="empty compact-empty">Aun no hay usuarios root creados.</div>}
+            </div>
+          </section>
+        </section>
+        {profileModal}
+      </main>
+    );
+  }
 
   if (!selectedOrganization) {
     return (
@@ -870,6 +1892,9 @@ export function App() {
           </div>
           <div className="session">
             <span>{activeUser.email}</span>
+            <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
+              <UserRound size={18} />
+            </button>
             <button className="icon-button" onClick={handleLogout} title="Cerrar sesion">
               <LogOut size={18} />
             </button>
@@ -905,10 +1930,12 @@ export function App() {
                 <p className="eyebrow">Organizaciones</p>
                 <h2>Elige donde trabajar</h2>
               </div>
-              <button onClick={() => openOrganizationModal()} type="button">
-                <Plus size={18} />
-                Agregar organizacion
-              </button>
+              {isOwner && (
+                <button onClick={() => openOrganizationModal()} type="button">
+                  <Plus size={18} />
+                  Agregar organizacion
+                </button>
+              )}
             </div>
             <div className="organization-grid">
               {organizations.map((organization) => (
@@ -920,19 +1947,21 @@ export function App() {
                     <strong>{organization.name}</strong>
                     <span>{organization.role}</span>
                   </button>
-                  <div className="row-actions">
-                    <button className="icon-button" onClick={() => openOrganizationModal(organization)} title="Editar organizacion">
-                      <Pencil size={16} />
-                    </button>
-                    <button
-                      className="icon-button danger"
-                      disabled={loading}
-                      onClick={() => handleDeleteOrganization(organization)}
-                      title="Eliminar organizacion"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+                  {organization.role === "owner" && (
+                    <div className="row-actions">
+                      <button className="icon-button" onClick={() => openOrganizationModal(organization)} title="Editar organizacion">
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        className="icon-button danger"
+                        disabled={loading}
+                        onClick={() => handleDeleteOrganization(organization)}
+                        title="Eliminar organizacion"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
@@ -971,6 +2000,7 @@ export function App() {
             </section>
           </div>
         )}
+        {profileModal}
       </main>
     );
   }
@@ -984,11 +2014,22 @@ export function App() {
           <p className="muted">Organizacion activa: {selectedOrganization.name}</p>
         </div>
         <div className="session">
-          <button className="secondary-button" onClick={returnToOrganizationSelector} type="button">
-            <Building2 size={17} />
-            Cambiar organizacion
-          </button>
+          {isOwner && (
+            <>
+              <button className="secondary-button" onClick={openBusinessHoursModal} type="button">
+                <Clock size={17} />
+                Horario de seguimiento
+              </button>
+              <button className="secondary-button" onClick={returnToOrganizationSelector} type="button">
+                <Building2 size={17} />
+                Cambiar organizacion
+              </button>
+            </>
+          )}
           <span>{activeUser.email}</span>
+          <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
+            <UserRound size={18} />
+          </button>
           <button className="icon-button" onClick={handleLogout} title="Cerrar sesion">
             <LogOut size={18} />
           </button>
@@ -997,10 +2038,6 @@ export function App() {
 
       <section className="summary-grid" aria-label="Resumen operativo">
         <div className="metric-card">
-          <span className="summary-number">{connections.length}</span>
-          <span className="muted">cuentas</span>
-        </div>
-        <div className="metric-card">
           <span className="summary-number">{messages.length}</span>
           <span className="muted">correos</span>
         </div>
@@ -1008,14 +2045,22 @@ export function App() {
           <span className="summary-number">{attachments.length}</span>
           <span className="muted">adjuntos</span>
         </div>
-        <div className="metric-card">
-          <span className="summary-number">{activeRules}</span>
-          <span className="muted">reglas activas</span>
-        </div>
-        <div className="metric-card">
-          <span className="summary-number">{events.length}</span>
-          <span className="muted">eventos</span>
-        </div>
+        {isOwner && (
+          <>
+            <div className="metric-card">
+              <span className="summary-number">{connections.length}</span>
+              <span className="muted">cuentas</span>
+            </div>
+            <div className="metric-card">
+              <span className="summary-number">{activeRules}</span>
+              <span className="muted">reglas activas</span>
+            </div>
+            <div className="metric-card">
+              <span className="summary-number">{events.length}</span>
+              <span className="muted">eventos</span>
+            </div>
+          </>
+        )}
       </section>
 
       {message && (
@@ -1025,7 +2070,7 @@ export function App() {
       )}
 
       <section className="workspace">
-        <div className="workspace-toolbar">
+        {isOwner && <div className="workspace-toolbar">
           <nav className="account-tabs" aria-label="Navegacion principal">
             <button
               className={activeMainTab === "accounts" ? "active" : ""}
@@ -1047,14 +2092,14 @@ export function App() {
               <ListChecks size={18} />
               Nueva regla
             </button>
-            <button onClick={() => setIsAccountModalOpen(true)} type="button">
+            <button onClick={() => openAccountModal()} type="button">
               <Plus size={18} />
               Agregar
             </button>
           </div>
-        </div>
+        </div>}
 
-        {activeMainTab === "rules" ? (
+        {isOwner && activeMainTab === "rules" ? (
           <section className="panel">
             <div className="panel-header">
               <div>
@@ -1093,6 +2138,14 @@ export function App() {
                       type="button"
                     >
                       <MessageCircle size={16} />
+                    </button>
+                    <button
+                      className={`icon-button ${followupConfig(rule).enabled ? "solid" : ""}`}
+                      onClick={() => openRuleFollowupModal(rule)}
+                      title="Seguimiento de respuestas"
+                      type="button"
+                    >
+                      <Clock size={16} />
                     </button>
                     <button className="icon-button danger" onClick={() => handleDeleteRule(rule.id)} title="Eliminar regla" type="button">
                       <Trash2 size={16} />
@@ -1142,42 +2195,51 @@ export function App() {
                       </td>
                       <td>
                         <div className="row-actions" onClick={(event) => event.stopPropagation()}>
-                          <button
-                            className="icon-button"
-                            disabled={loading || connectionRuleCount(connection.id) === 0}
-                            onClick={() => handleSyncConnection(connection.id)}
-                            title={connectionRuleCount(connection.id) === 0 ? "Crea una regla antes de sincronizar" : "Sincronizar Gmail"}
-                          >
-                            <RefreshCw size={17} />
-                          </button>
-                          <button
-                            className={`icon-button ${isWatchActive(connection) ? "danger" : ""}`}
-                            disabled={loading}
-                            onClick={() =>
-                              isWatchActive(connection)
-                                ? handleStopWatchConnection(connection.id)
-                                : openWatchModal(connection)
-                            }
-                            title={isWatchActive(connection) ? "Inactivar monitor Gmail" : "Registrar monitor Gmail"}
-                          >
-                            <Bell size={17} />
-                          </button>
-                          <button
-                            className="icon-button"
-                            disabled={loading}
-                            onClick={() => openWhatsAppModal(connection)}
-                            title="Configurar WhatsApp"
-                          >
-                            <MessageCircle size={17} />
-                          </button>
-                          <button
-                            className="icon-button danger"
-                            disabled={loading}
-                            onClick={() => handleDeleteConnection(connection.id)}
-                            title="Desconectar cuenta"
-                          >
-                            <Trash2 size={17} />
-                          </button>
+                          {isOwner ? (
+                            <>
+                              <button className="icon-button" disabled={loading} onClick={() => openAccountModal(connection)} title="Editar cuenta" type="button">
+                                <Pencil size={17} />
+                              </button>
+                              <button
+                                className="icon-button"
+                                disabled={loading || connectionRuleCount(connection.id) === 0}
+                                onClick={() => handleSyncConnection(connection.id)}
+                                title={connectionRuleCount(connection.id) === 0 ? "Crea una regla antes de sincronizar" : "Sincronizar Gmail"}
+                              >
+                                <RefreshCw size={17} />
+                              </button>
+                              <button
+                                className={`icon-button ${isWatchActive(connection) ? "danger" : ""}`}
+                                disabled={loading}
+                                onClick={() =>
+                                  isWatchActive(connection)
+                                    ? handleStopWatchConnection(connection.id)
+                                    : openWatchModal(connection)
+                                }
+                                title={isWatchActive(connection) ? "Inactivar monitor Gmail" : "Registrar monitor Gmail"}
+                              >
+                                <Bell size={17} />
+                              </button>
+                              <button className="icon-button" disabled={loading} onClick={() => openWhatsAppModal(connection)} title="Configurar WhatsApp">
+                                <MessageCircle size={17} />
+                              </button>
+                              <button
+                                className={`icon-button ${connection.followup_enabled ? "solid" : ""}`}
+                                disabled={loading}
+                                onClick={() => openAccountFollowupModal(connection)}
+                                title="Seguimiento por cuenta"
+                              >
+                                <Clock size={17} />
+                              </button>
+                              <button className="icon-button danger" disabled={loading} onClick={() => handleDeleteConnection(connection.id)} title="Desconectar cuenta">
+                                <Trash2 size={17} />
+                              </button>
+                            </>
+                          ) : connection.status !== "connected" ? (
+                            <button className="icon-button solid" disabled={loading} onClick={() => handleLinkSelectedAccount(connection.id)} title="Vincular con Google">
+                              <ShieldCheck size={17} />
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -1201,13 +2263,18 @@ export function App() {
                   <p className="eyebrow">Cuenta activa</p>
                   <div className="account-title-row">
                     <h2>{selectedConnection.display_name || selectedConnection.email}</h2>
-                    <button className="icon-button subtle-icon" onClick={() => setIsEditingConnection((current) => !current)} title="Editar cuenta" type="button">
-                      <Pencil size={16} />
-                    </button>
+                    {isOwner && (
+                      <button className="icon-button subtle-icon" onClick={() => openAccountModal(selectedConnection)} title="Editar cuenta" type="button">
+                        <Pencil size={16} />
+                      </button>
+                    )}
                   </div>
                   <p className="muted">{selectedConnection.email}</p>
+                  {selectedConnection.assigned_user_email && isOwner && (
+                    <p className="muted">Usuario: {selectedConnection.assigned_user_email}</p>
+                  )}
                 </div>
-                <div className="account-status-strip">
+                {isOwner && <div className="account-status-strip">
                   <span className={connectionRuleCount(selectedConnection.id) > 0 ? "status" : "status warning"}>
                     {connectionRuleCount(selectedConnection.id)} reglas asociadas
                   </span>
@@ -1223,35 +2290,57 @@ export function App() {
                         ? "WhatsApp pendiente"
                         : "WhatsApp no configurado"}
                   </span>
-                </div>
-                <div className="account-actions">
-                  <button
-                    className="account-command"
-                    disabled={loading || connectionRuleCount(selectedConnection.id) === 0}
-                    onClick={() => handleSyncConnection(selectedConnection.id)}
-                    title={connectionRuleCount(selectedConnection.id) === 0 ? "Crea una regla antes de sincronizar" : "Sincronizar Gmail"}
-                    type="button"
-                  >
-                    <RefreshCw size={17} />
-                    Sincronizar
-                  </button>
-                  {isWatchActive(selectedConnection) ? (
-                    <button className="account-command danger-command" disabled={loading} onClick={() => handleStopWatchConnection(selectedConnection.id)} type="button">
-                      <Bell size={17} />
-                      Inactivar monitor
+                  <span className={selectedConnection.followup_enabled ? "status" : "status neutral"}>
+                    {selectedConnection.followup_enabled
+                      ? `Seguimiento cuenta ${formatMinutes(selectedConnection.followup_response_time_minutes)}`
+                      : "Seguimiento por cuenta inactivo"}
+                  </span>
+                </div>}
+                {isOwner ? (
+                  <div className="account-actions">
+                    <button
+                      className="account-command"
+                      disabled={loading || connectionRuleCount(selectedConnection.id) === 0}
+                      onClick={() => handleSyncConnection(selectedConnection.id)}
+                      title={connectionRuleCount(selectedConnection.id) === 0 ? "Crea una regla antes de sincronizar" : "Sincronizar Gmail"}
+                      type="button"
+                    >
+                      <RefreshCw size={17} />
+                      Sincronizar
                     </button>
-                  ) : (
-                    <button className="account-command" disabled={loading} onClick={() => openWatchModal(selectedConnection)} type="button">
-                      <Bell size={17} />
-                      Activar monitor
+                    {isWatchActive(selectedConnection) ? (
+                      <button className="account-command danger-command" disabled={loading} onClick={() => handleStopWatchConnection(selectedConnection.id)} type="button">
+                        <Bell size={17} />
+                        Inactivar monitor
+                      </button>
+                    ) : (
+                      <button className="account-command" disabled={loading} onClick={() => openWatchModal(selectedConnection)} type="button">
+                        <Bell size={17} />
+                        Activar monitor
+                      </button>
+                    )}
+                    <button className="account-command" disabled={loading} onClick={() => openWhatsAppModal(selectedConnection)} type="button">
+                      <MessageCircle size={17} />
+                      WhatsApp
                     </button>
-                  )}
-                  <button className="account-command" disabled={loading} onClick={() => openWhatsAppModal(selectedConnection)} type="button">
-                    <MessageCircle size={17} />
-                    WhatsApp
-                  </button>
-                </div>
-                {isEditingConnection && (
+                    <button className="account-command" disabled={loading} onClick={() => openAccountFollowupModal(selectedConnection)} type="button">
+                      <Clock size={17} />
+                      Seguimiento
+                    </button>
+                  </div>
+                ) : (
+                  <div className="account-actions">
+                    <button className="account-command" disabled={loading || selectedConnection.status !== "connected"} onClick={() => handleSyncConnection(selectedConnection.id)} type="button">
+                      <RefreshCw size={17} />
+                      Sincronizar
+                    </button>
+                    <button className="account-command primary-command" disabled={loading} onClick={() => handleLinkSelectedAccount()} type="button">
+                      <ShieldCheck size={17} />
+                      {selectedConnection.status === "connected" ? "Re-vincular Gmail" : "Vincular Gmail"}
+                    </button>
+                  </div>
+                )}
+                {isOwner && isEditingConnection && (
                   <div className="account-edit-panel">
                     <label>
                       Nombre visible
@@ -1295,10 +2384,18 @@ export function App() {
                 <Paperclip size={18} />
                 Adjuntos
               </button>
-              <button className={activePanel === "events" ? "active" : ""} onClick={() => setActivePanel("events")} type="button">
-                <Bell size={18} />
-                Eventos
-              </button>
+              {isOwner && (
+                <>
+                  <button className={activePanel === "followups" ? "active" : ""} onClick={() => setActivePanel("followups")} type="button">
+                    <Clock size={18} />
+                    Seguimientos
+                  </button>
+                  <button className={activePanel === "events" ? "active" : ""} onClick={() => setActivePanel("events")} type="button">
+                    <Bell size={18} />
+                    Eventos
+                  </button>
+                </>
+              )}
             </nav>
 
             {activePanel === "emails" && (
@@ -1381,7 +2478,9 @@ export function App() {
                   <div className="message-list">
                     {filteredMessages.map((emailMessage) => (
                       <button
-                        className={`message-item ${selectedMessage?.id === emailMessage.id ? "selected" : ""}`}
+                        className={`message-item ${selectedMessage?.id === emailMessage.id ? "selected" : ""} ${
+                          emailMessage.status === "deleted_in_gmail" ? "deleted-message" : ""
+                        }`}
                         key={emailMessage.id}
                         onClick={() => setSelectedMessageId(emailMessage.id)}
                         type="button"
@@ -1393,6 +2492,7 @@ export function App() {
                           {emailMessage.snippet && <p className="snippet">{emailMessage.snippet}</p>}
                         </div>
                         <div className="message-meta">
+                          {emailMessage.status === "deleted_in_gmail" && <span className="status warning">Eliminado en Gmail</span>}
                           {emailMessage.matched_rule_name && <span className="status rule-status">{emailMessage.matched_rule_name}</span>}
                           {emailMessage.has_attachments && <span className="status">adjuntos</span>}
                           <span>{formatDate(emailMessage.received_at)}</span>
@@ -1443,6 +2543,12 @@ export function App() {
                           </div>
                         </dl>
                         {selectedMessage.snippet && <p className="detail-snippet">{selectedMessage.snippet}</p>}
+                        {isOwner && (
+                          <button className="secondary-button" disabled={loading} onClick={() => openManualFollowupModal(selectedMessage)} type="button">
+                            <Clock size={17} />
+                            Dar seguimiento
+                          </button>
+                        )}
                       </div>
 
                       <section className="panel-subsection">
@@ -1480,10 +2586,12 @@ export function App() {
                       Estas reglas definen que correos se sincronizan. Un correo que no cumpla ninguna regla asociada no entra a la bandeja.
                     </p>
                   </div>
-                  <button onClick={openRuleModal} type="button">
-                    <Plus size={18} />
-                    Nueva regla
-                  </button>
+                  {isOwner && (
+                    <button onClick={openRuleModal} type="button">
+                      <Plus size={18} />
+                      Nueva regla
+                    </button>
+                  )}
                 </div>
                 <div className="rules-table-list">
                   {visibleRules.map((rule) => (
@@ -1492,22 +2600,32 @@ export function App() {
                         <strong>{rule.name}</strong>
                         <span>{ruleSummary(rule)}</span>
                       </div>
-                      <div className="row-actions">
-                        <button className="icon-button" onClick={() => openEditRuleModal(rule)} title="Editar regla" type="button">
-                          <Pencil size={16} />
-                        </button>
-                        <button
-                          className={`icon-button ${(rule.whatsapp_enabled_connection_ids || []).length > 0 ? "solid" : ""}`}
-                          onClick={() => openRuleWhatsAppModal(rule)}
-                          title="Notificaciones WhatsApp"
-                          type="button"
-                        >
-                          <MessageCircle size={16} />
-                        </button>
-                        <button className="icon-button danger" onClick={() => handleDeleteRule(rule.id)} title="Eliminar regla" type="button">
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                      {isOwner && (
+                        <div className="row-actions">
+                          <button className="icon-button" onClick={() => openEditRuleModal(rule)} title="Editar regla" type="button">
+                            <Pencil size={16} />
+                          </button>
+                          <button
+                            className={`icon-button ${(rule.whatsapp_enabled_connection_ids || []).length > 0 ? "solid" : ""}`}
+                            onClick={() => openRuleWhatsAppModal(rule)}
+                            title="Notificaciones WhatsApp"
+                            type="button"
+                          >
+                            <MessageCircle size={16} />
+                          </button>
+                          <button
+                            className={`icon-button ${followupConfig(rule).enabled ? "solid" : ""}`}
+                            onClick={() => openRuleFollowupModal(rule)}
+                            title="Seguimiento de respuestas"
+                            type="button"
+                          >
+                            <Clock size={16} />
+                          </button>
+                          <button className="icon-button danger" onClick={() => handleDeleteRule(rule.id)} title="Eliminar regla" type="button">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      )}
                     </article>
                   ))}
                   {visibleRules.length === 0 && <div className="empty compact-empty">Sin reglas configuradas para esta cuenta.</div>}
@@ -1535,23 +2653,181 @@ export function App() {
               </section>
             )}
 
+            {activePanel === "followups" && (
+              <section className="panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Trazabilidad</p>
+                    <h2>Seguimientos de respuesta</h2>
+                    <p className="muted">Correos importantes que requieren respuesta desde la cuenta conectada.</p>
+                  </div>
+                  <div className="toolbar-actions">
+                    <select
+                      aria-label="Filtrar seguimientos"
+                      value={followupStatusFilter}
+                      onChange={(event) => setFollowupStatusFilter(event.target.value)}
+                    >
+                      <option value="all">Todos</option>
+                      {followupStatusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {followupStatusLabel(status)}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="secondary-button" disabled={loading} onClick={handleEvaluateFollowups} type="button">
+                      <RefreshCw size={17} />
+                      Evaluar
+                    </button>
+                  </div>
+                </div>
+                <div className="followup-list">
+                  {followupSummary && (
+                    <div className="followup-summary">
+                      <span>Pendientes: {followupSummary.totals.pending || 0}</span>
+                      <span>Vencidos: {followupSummary.totals.overdue || 0}</span>
+                      <span>Respondidos: {(followupSummary.totals.responded || 0) + (followupSummary.totals.responded_late || 0)}</span>
+                      <span>Promedio: {formatMinutes(followupSummary.avg_response_minutes)}</span>
+                    </div>
+                  )}
+                  {visibleFollowups.map((followup) => (
+                    <article className="followup-row" key={followup.id}>
+                      <span className={`status followup-${followup.status}`}>{followupStatusLabel(followup.status)}</span>
+                      <div>
+                        <strong>{followup.subject || "Sin asunto"}</strong>
+                        <span>{followup.sender || "Remitente no disponible"}</span>
+                      </div>
+                      <div>
+                        <small>Fuente</small>
+                        <span>{followup.tracking_source}</span>
+                      </div>
+                      <div>
+                        <small>Regla</small>
+                        <span>{followup.automation_rule_name || "Sin regla"}</span>
+                      </div>
+                      <div>
+                        <small>Vence</small>
+                        <span>{formatDate(followup.response_due_at)}</span>
+                      </div>
+                      <div>
+                        <small>Respuesta</small>
+                        <span>{followup.first_response_at ? formatDate(followup.first_response_at) : "Pendiente"}</span>
+                      </div>
+                      <div>
+                        <small>Tiempo</small>
+                        <span>{formatMinutes(followup.response_time_minutes)}</span>
+                      </div>
+                    </article>
+                  ))}
+                  {visibleFollowups.length === 0 && (
+                    <div className="empty compact-empty">Aun no hay seguimientos para esta seleccion.</div>
+                  )}
+                </div>
+              </section>
+            )}
+
             {activePanel === "events" && (
               <section className="panel">
                 <div className="panel-header">
                   <div>
                     <p className="eyebrow">Actividad</p>
                     <h2>Eventos recientes</h2>
+                    <p className="muted">
+                      Revisa decisiones utiles del sistema: correos sincronizados, descartados, avisos WhatsApp y casos que requieren atencion.
+                    </p>
+                  </div>
+                </div>
+                <div className="event-filters">
+                  <label>
+                    Tipo
+                    <select value={eventTypeFilter} onChange={(event) => setEventTypeFilter(event.target.value)}>
+                      {eventTypeOptions.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Desde
+                    <input value={eventDateFrom} onChange={(event) => setEventDateFrom(event.target.value)} type="date" />
+                  </label>
+                  <label>
+                    Hasta
+                    <input value={eventDateTo} onChange={(event) => setEventDateTo(event.target.value)} type="date" />
+                  </label>
+                  <label>
+                    Cantidad
+                    <input min="1" max="500" value={eventLimit} onChange={(event) => setEventLimit(event.target.value)} type="number" />
+                  </label>
+                  <div className="event-filter-actions">
+                    <button className="secondary-button" disabled={loading} onClick={() => refreshEventsWithFilters()} type="button">
+                      <Filter size={17} />
+                      Filtrar
+                    </button>
+                    <button className="ghost-button" disabled={loading} onClick={clearEventFilters} type="button">
+                      Limpiar
+                    </button>
                   </div>
                 </div>
                 <div className="compact-list">
-                  {visibleEvents.map((event) => (
-                    <div className="event-row" key={event.id}>
-                      <span className="status neutral">{event.level}</span>
-                      <strong>{event.event_type}</strong>
-                      <span>{event.message}</span>
-                      <time>{formatDate(event.created_at)}</time>
-                    </div>
-                  ))}
+                  {visibleEvents.map((event) => {
+                    const detailItems = eventDetailItems(event);
+                    const ruleDiagnostics = eventRuleDiagnostics(event);
+                    const tone = eventTone(event);
+
+                    return (
+                      <article className={`event-card event-${tone}`} key={event.id}>
+                        <div className="event-card-icon" aria-hidden="true">
+                          {tone === "success" ? <CheckCircle2 size={20} /> : tone === "warning" ? <AlertTriangle size={20} /> : <Mail size={20} />}
+                        </div>
+                        <div className="event-card-body">
+                          <div className="event-title">
+                            <div>
+                              <span className="event-kicker">{eventTypeLabel(event.event_type)}</span>
+                              <strong>{eventTitle(event)}</strong>
+                              <span>{eventSubtitle(event)}</span>
+                            </div>
+                            <time>{formatDate(event.created_at)}</time>
+                          </div>
+                          {event.event_type !== "gmail_message_ignored" && <span className="event-message">{event.message}</span>}
+                        {detailItems.length > 0 && (
+                          <dl className="event-details">
+                            {detailItems.map(([label, value]) => (
+                              <div key={`${event.id}-${label}`}>
+                                <dt>{label}</dt>
+                                <dd>{value}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        )}
+                        {ruleDiagnostics.length > 0 && (
+                          <div className="event-rule-checks">
+                            {ruleDiagnostics.map((rule) => (
+                              <div className="event-rule-check" key={`${event.id}-${rule.ruleName}`}>
+                                <div className="event-rule-heading">
+                                  <span className={`status ${rule.matched ? "connected" : "neutral"}`}>
+                                    {rule.matched ? "Coincide" : "No coincide"}
+                                  </span>
+                                  <strong>{rule.ruleName}</strong>
+                                </div>
+                                {rule.checks.length > 0 && (
+                                  <div className="event-check-list">
+                                    {rule.checks.map((check) => (
+                                      <span className={check.passed ? "passed" : "failed"} key={`${rule.ruleName}-${check.label}-${check.expected}`}>
+                                        {check.label}: {check.expected}
+                                        {check.matchType && <small>{check.matchType}</small>}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        </div>
+                      </article>
+                    );
+                  })}
                   {visibleEvents.length === 0 && <div className="empty compact-empty">Sin eventos registrados.</div>}
                 </div>
               </section>
@@ -1565,23 +2841,26 @@ export function App() {
           <section className="modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
             <div className="modal-header">
               <div>
-                <p className="eyebrow">Nueva cuenta</p>
-                <h2 id="account-modal-title">Agregar conexion Gmail</h2>
+                <p className="eyebrow">{editingAccount ? "Editar cuenta" : "Nueva cuenta"}</p>
+                <h2 id="account-modal-title">{editingAccount ? "Actualizar cuenta" : "Agregar conexion Gmail"}</h2>
               </div>
               <button className="icon-button" onClick={resetAccountModal} title="Cerrar" type="button">
                 <X size={18} />
               </button>
             </div>
             <p className="muted">
-              Define como identificaras esta cuenta dentro del sistema. Luego Google confirmara el correo real y creara la conexion.
+              {editingAccount
+                ? "Actualiza la identificacion interna y el usuario que puede acceder a esta cuenta. El correo Gmail vinculado no cambia aqui."
+                : "Crea el acceso del responsable de esta cuenta. Puede vincular Google ahora o entrar despues con este usuario."}
             </p>
-            <form onSubmit={handleStartGoogleOAuth} className="modal-form">
+            {accountModalMessage && <p className="message modal-message">{accountModalMessage}</p>}
+            <form onSubmit={editingAccount ? handleSaveEditedAccount : handleStartGoogleOAuth} className="modal-form">
               <label>
                 Nombre de la cuenta
                 <input
                   value={newAccountName}
                   onChange={(event) => setNewAccountName(event.target.value)}
-                  placeholder="Facturas proveedores"
+                  placeholder="Mesa de ayuda, Compras, Contabilidad"
                 />
               </label>
               <label>
@@ -1589,17 +2868,49 @@ export function App() {
                 <textarea
                   value={newAccountPurpose}
                   onChange={(event) => setNewAccountPurpose(event.target.value)}
-                  placeholder="Recibe facturas con PDF para enviarlas al flujo contable"
+                  placeholder="Describe el proposito de esta cuenta para tu equipo"
+                />
+              </label>
+              <label>
+                Usuario
+                <input
+                  value={newAccountUserEmail}
+                  onChange={(event) => setNewAccountUserEmail(event.target.value)}
+                  placeholder="responsable@empresa.com"
+                  type="email"
+                />
+              </label>
+              <label>
+                Contrasena
+                <input
+                  value={newAccountPassword}
+                  onChange={(event) => setNewAccountPassword(event.target.value)}
+                  placeholder={editingAccount ? "Dejala vacia para conservarla" : "Minimo 6 caracteres"}
+                  type="password"
                 />
               </label>
               <button disabled={loading} type="submit">
-                <ShieldCheck size={18} />
-                Vincular cuenta de Google
+                {editingAccount ? <Pencil size={18} /> : <ShieldCheck size={18} />}
+                {editingAccount ? "Guardar cambios" : "Vincular cuenta de Google"}
               </button>
+              {editingAccount ? (
+                editingAccount.status !== "connected" && (
+                  <button className="secondary-button full-button" disabled={loading} onClick={(event) => handleSaveEditedAccount(event, true)} type="button">
+                    <ShieldCheck size={18} />
+                    Guardar y vincular
+                  </button>
+                )
+              ) : (
+                <button className="secondary-button full-button" disabled={loading} onClick={handleCreateAccountAccess} type="button">
+                  <UserRound size={18} />
+                  Crear acceso
+                </button>
+              )}
             </form>
           </section>
         </div>
       )}
+      {profileModal}
 
       {isRuleModalOpen && (
         <div className="modal-backdrop" role="presentation">
@@ -1734,7 +3045,7 @@ export function App() {
                 </label>
                 <label className="radio-option">
                   <input checked={watchDuration === "1y"} onChange={() => setWatchDuration("1y")} type="radio" />
-                  1 ano
+                  1 año
                 </label>
                 <label className="radio-option">
                   <input checked={watchDuration === "custom"} onChange={() => setWatchDuration("custom")} type="radio" />
@@ -1819,6 +3130,212 @@ export function App() {
         </div>
       )}
 
+      {ruleFollowupTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="rule-followup-modal-title">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Seguimiento</p>
+                <h2 id="rule-followup-modal-title">Trazabilidad de respuestas</h2>
+              </div>
+              <button className="icon-button" onClick={closeRuleFollowupModal} title="Cerrar" type="button">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="muted">
+              Cuando esta opcion esta activa, cada correo nuevo que entre por esta regla queda en seguimiento hasta que la cuenta conectada responda en el mismo hilo.
+            </p>
+            {ruleFollowupMessage && <p className="message modal-message">{ruleFollowupMessage}</p>}
+            <form className="modal-form" onSubmit={handleSaveRuleFollowup}>
+              <label className="checkbox-label">
+                <input
+                  checked={ruleFollowupEnabled}
+                  onChange={(event) => setRuleFollowupEnabled(event.target.checked)}
+                  type="checkbox"
+                />
+                Activar seguimiento para esta regla
+              </label>
+              <label>
+                Tiempo maximo de respuesta en horas
+                <input
+                  min="0.25"
+                  step="0.25"
+                  type="number"
+                  value={ruleFollowupHours}
+                  onChange={(event) => setRuleFollowupHours(event.target.value)}
+                />
+              </label>
+              <label className="checkbox-label">
+                <input
+                  checked={ruleFollowupNotifyWhatsApp}
+                  onChange={(event) => setRuleFollowupNotifyWhatsApp(event.target.checked)}
+                  type="checkbox"
+                />
+                Notificar por WhatsApp si vence sin respuesta
+              </label>
+              <label>
+                Preaviso antes de vencer en minutos
+                <input
+                  min="1"
+                  type="number"
+                  value={ruleFollowupWarnMinutes}
+                  onChange={(event) => setRuleFollowupWarnMinutes(event.target.value)}
+                  placeholder="30"
+                />
+              </label>
+              <label>
+                Escalar despues de vencido en minutos
+                <input
+                  min="1"
+                  type="number"
+                  value={ruleFollowupEscalationMinutes}
+                  onChange={(event) => setRuleFollowupEscalationMinutes(event.target.value)}
+                  placeholder="60"
+                />
+              </label>
+              <button disabled={loading} type="submit">
+                <Clock size={18} />
+                Guardar seguimiento
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {accountFollowupTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="account-followup-modal-title">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Seguimiento</p>
+                <h2 id="account-followup-modal-title">Seguimiento por cuenta</h2>
+              </div>
+              <button className="icon-button" onClick={closeAccountFollowupModal} title="Cerrar" type="button">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="muted">
+              Activa seguimiento para todos los correos sincronizados de {accountFollowupTarget.display_name || accountFollowupTarget.email}, incluso si la regla no tiene seguimiento propio.
+            </p>
+            {accountFollowupMessage && <p className="message modal-message">{accountFollowupMessage}</p>}
+            <form className="modal-form" onSubmit={handleSaveAccountFollowup}>
+              <label className="checkbox-label">
+                <input
+                  checked={accountFollowupEnabled}
+                  onChange={(event) => setAccountFollowupEnabled(event.target.checked)}
+                  type="checkbox"
+                />
+                Activar seguimiento por cuenta
+              </label>
+              <label>
+                Tiempo maximo de respuesta en horas
+                <input
+                  min="0.25"
+                  step="0.25"
+                  type="number"
+                  value={accountFollowupHours}
+                  onChange={(event) => setAccountFollowupHours(event.target.value)}
+                />
+              </label>
+              <label className="checkbox-label">
+                <input
+                  checked={accountFollowupNotifyWhatsApp}
+                  onChange={(event) => setAccountFollowupNotifyWhatsApp(event.target.checked)}
+                  type="checkbox"
+                />
+                Notificar por WhatsApp si vence sin respuesta
+              </label>
+              <label>
+                Preaviso antes de vencer en minutos
+                <input
+                  min="1"
+                  type="number"
+                  value={accountFollowupWarnMinutes}
+                  onChange={(event) => setAccountFollowupWarnMinutes(event.target.value)}
+                  placeholder="30"
+                />
+              </label>
+              <label>
+                Escalar despues de vencido en minutos
+                <input
+                  min="1"
+                  type="number"
+                  value={accountFollowupEscalationMinutes}
+                  onChange={(event) => setAccountFollowupEscalationMinutes(event.target.value)}
+                  placeholder="60"
+                />
+              </label>
+              <button disabled={loading} type="submit">
+                <Clock size={18} />
+                Guardar seguimiento
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {manualFollowupTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="manual-followup-modal-title">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Seguimiento manual</p>
+                <h2 id="manual-followup-modal-title">Dar seguimiento a este correo</h2>
+              </div>
+              <button className="icon-button" onClick={closeManualFollowupModal} title="Cerrar" type="button">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="muted">{manualFollowupTarget.subject || "Sin asunto"}</p>
+            {manualFollowupMessage && <p className="message modal-message">{manualFollowupMessage}</p>}
+            <form className="modal-form" onSubmit={handleCreateManualFollowup}>
+              <label>
+                Tiempo maximo de respuesta en horas
+                <input
+                  min="0.25"
+                  step="0.25"
+                  type="number"
+                  value={manualFollowupHours}
+                  onChange={(event) => setManualFollowupHours(event.target.value)}
+                />
+              </label>
+              <label className="checkbox-label">
+                <input
+                  checked={manualFollowupNotifyWhatsApp}
+                  onChange={(event) => setManualFollowupNotifyWhatsApp(event.target.checked)}
+                  type="checkbox"
+                />
+                Notificar por WhatsApp si vence sin respuesta
+              </label>
+              <label>
+                Preaviso antes de vencer en minutos
+                <input
+                  min="1"
+                  type="number"
+                  value={manualFollowupWarnMinutes}
+                  onChange={(event) => setManualFollowupWarnMinutes(event.target.value)}
+                  placeholder="30"
+                />
+              </label>
+              <label>
+                Escalar despues de vencido en minutos
+                <input
+                  min="1"
+                  type="number"
+                  value={manualFollowupEscalationMinutes}
+                  onChange={(event) => setManualFollowupEscalationMinutes(event.target.value)}
+                  placeholder="60"
+                />
+              </label>
+              <button disabled={loading} type="submit">
+                <Clock size={18} />
+                Crear seguimiento
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+
       {whatsAppConnectionTarget && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal" role="dialog" aria-modal="true" aria-labelledby="whatsapp-modal-title">
@@ -1836,7 +3353,7 @@ export function App() {
               Se abrira WhatsApp con un mensaje de confirmacion hacia el asistente de la plataforma.
             </p>
             {whatsAppModalMessage && <p className="message modal-message">{whatsAppModalMessage}</p>}
-            <form className="modal-form" onSubmit={handleSubmitWhatsApp}>
+            <form className="modal-form whatsapp-settings-form" onSubmit={handleSubmitWhatsApp}>
               <label>
                 Numero de WhatsApp
                 <input
@@ -1849,6 +3366,169 @@ export function App() {
               <button disabled={loading} type="submit">
                 <MessageCircle size={18} />
                 Abrir WhatsApp Web
+              </button>
+            </form>
+            <section className="whatsapp-preferences">
+              <div>
+                <p className="eyebrow">Notificaciones</p>
+                <h3>Tipos de avisos</h3>
+                <p className="muted">Controla que mensajes enviaremos a este numero cuando la cuenta este conectada.</p>
+              </div>
+              <ToggleRow
+                checked={whatsAppNotificationsEnabled}
+                description="Enciende o apaga todos los avisos de esta cuenta."
+                label="Todos"
+                onChange={setAllWhatsAppNotifications}
+              />
+              <ToggleRow
+                checked={whatsAppNotifyNewEmail}
+                description="Se envia solo si la regla tambien tiene WhatsApp habilitado."
+                label="Correo nuevo"
+                onChange={setWhatsAppNotifyNewEmail}
+              />
+              <div className="preference-group">
+                <span>Seguimiento</span>
+                <ToggleRow
+                  checked={whatsAppNotifyFollowupOverdue}
+                  label="Vencidos"
+                  onChange={setWhatsAppNotifyFollowupOverdue}
+                />
+                <ToggleRow
+                  checked={whatsAppNotifyFollowupWarning}
+                  label="Por vencer"
+                  onChange={setWhatsAppNotifyFollowupWarning}
+                />
+                <ToggleRow
+                  checked={whatsAppNotifyFollowupLate}
+                  label="Contestados tarde"
+                  onChange={setWhatsAppNotifyFollowupLate}
+                />
+                <ToggleRow
+                  checked={whatsAppNotifyFollowupResponded}
+                  label="Respondidos"
+                  onChange={setWhatsAppNotifyFollowupResponded}
+                />
+              </div>
+              <button className="secondary-button" disabled={loading} onClick={handleSaveWhatsAppPreferences} type="button">
+                <MessageCircle size={18} />
+                Guardar preferencias
+              </button>
+            </section>
+          </section>
+        </div>
+      )}
+
+      {isBusinessHoursModalOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="business-hours-modal-title">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Seguimiento</p>
+                <h2 id="business-hours-modal-title">Horario habil de respuesta</h2>
+              </div>
+              <button className="icon-button" onClick={closeBusinessHoursModal} title="Cerrar" type="button">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="muted">
+              Este horario es excluyente: los vencimientos de seguimiento solo consumen tiempo dentro de los dias y horas seleccionados.
+            </p>
+            {businessHoursMessage && <p className="message modal-message">{businessHoursMessage}</p>}
+            <form className="modal-form" onSubmit={handleSaveBusinessHours}>
+              <label>
+                Zona horaria
+                <select value={businessTimezone} onChange={(event) => setBusinessTimezone(event.target.value)}>
+                  <option value="America/Bogota">America/Bogota</option>
+                  <option value="America/Mexico_City">America/Mexico_City</option>
+                  <option value="America/Lima">America/Lima</option>
+                  <option value="America/Santiago">America/Santiago</option>
+                  <option value="America/New_York">America/New_York</option>
+                </select>
+              </label>
+              <div className="two-column-form">
+                <label>
+                  Hora general de inicio
+                  <input value={businessStartTime} onChange={(event) => setBusinessStartTime(event.target.value)} type="time" />
+                </label>
+                <label>
+                  Hora general de fin
+                  <input value={businessEndTime} onChange={(event) => setBusinessEndTime(event.target.value)} type="time" />
+                </label>
+              </div>
+              <fieldset className="business-day-schedule">
+                <legend>Dias y excepciones</legend>
+                {BUSINESS_DAY_OPTIONS.map(([day, label]) => {
+                  const config = businessDayHours[String(day)] || {
+                    enabled: businessDays.includes(day),
+                    uses_default: true,
+                    start_time: null,
+                    end_time: null,
+                  };
+                  return (
+                    <div className={`business-day-row ${config.enabled ? "enabled" : "disabled"}`} key={day}>
+                      <label className="checkbox-label">
+                        <input checked={config.enabled} onChange={() => toggleBusinessDay(day)} type="checkbox" />
+                        {label}
+                      </label>
+                      <label className="checkbox-label">
+                        <input
+                          checked={config.uses_default}
+                          disabled={!config.enabled}
+                          onChange={(event) =>
+                            updateBusinessDayHour(day, {
+                              uses_default: event.target.checked,
+                              start_time: event.target.checked ? null : config.start_time || businessStartTime,
+                              end_time: event.target.checked ? null : config.end_time || businessEndTime,
+                            })
+                          }
+                          type="checkbox"
+                        />
+                        Usa horario general
+                      </label>
+                      <div className="day-hour-inputs">
+                        <input
+                          aria-label={`Inicio ${label}`}
+                          disabled={!config.enabled || config.uses_default}
+                          onChange={(event) => updateBusinessDayHour(day, { start_time: event.target.value })}
+                          type="time"
+                          value={config.start_time || businessStartTime}
+                        />
+                        <input
+                          aria-label={`Fin ${label}`}
+                          disabled={!config.enabled || config.uses_default}
+                          onChange={(event) => updateBusinessDayHour(day, { end_time: event.target.value })}
+                          type="time"
+                          value={config.end_time || businessEndTime}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </fieldset>
+              <label>
+                <span className="label-with-help">
+                  Pais de festivos
+                  <span className="help-icon" tabIndex={0}>
+                    <Info size={15} />
+                    <span className="help-tooltip" role="tooltip">
+                      Usa el codigo ISO de 2 letras del pais, por ejemplo CO para Colombia, MX para Mexico o US para Estados Unidos.
+                      Si no existe cache local para ese pais y ano, el backend consulta Nager.Date y guarda los festivos en BD. Luego el seguimiento excluye esos festivos y los festivos propios de la organizacion.
+                    </span>
+                  </span>
+                </span>
+                <input
+                  maxLength={2}
+                  value={holidayCountry}
+                  onChange={(event) => setHolidayCountry(event.target.value)}
+                  placeholder="CO"
+                />
+              </label>
+              <p className="muted">
+                Ejemplo: si un correo llega el viernes despues del cierre, el contador inicia en el siguiente minuto habil configurado.
+              </p>
+              <button disabled={loading} type="submit">
+                <Clock size={18} />
+                Guardar horario
               </button>
             </form>
           </section>

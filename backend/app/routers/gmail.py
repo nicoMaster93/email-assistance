@@ -1,5 +1,7 @@
 import json
 import base64
+import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -8,7 +10,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.config import ATTACHMENTS_DIR, GOOGLE_PUBSUB_TOPIC
 from app.db import db_session, sql, using_postgres
-from app.dependencies import CurrentUser
+from app.dependencies import CurrentUser, require_connection_access, require_owner
+from app.followups import create_followup_for_message, evaluate_pending_followups
 from app.google_client import gmail_get, gmail_get_attachment, gmail_post, refresh_access_token
 from app.openai_client import email_matches_ai_rule
 from app.schemas import EmailMessageResponse, GmailSyncResponse, GmailWatchRequest, GmailWatchResponse, PubSubPushRequest
@@ -293,6 +296,7 @@ def _send_whatsapp_rule_notification(conn, connection_id: int, rule_id: int, sub
             WHERE gc.id = ?
               AND ar.id = ?
               AND gc.whatsapp_status = 'connected'
+              AND gc.whatsapp_notify_new_email
               AND rc.whatsapp_notifications_enabled
             """
         ),
@@ -302,8 +306,11 @@ def _send_whatsapp_rule_notification(conn, connection_id: int, rule_id: int, sub
         return
 
     text = (
-        f"Nuevo correo detectado por la regla \"{row['rule_name']}\".\n"
+        f"Nuevo correo detectado.\n"
         f"Cuenta: {row['display_name'] or row['email']}\n"
+        f"Correo cuenta: {row['email']}\n"
+        f"Regla: {row['rule_name']}\n"
+        f"Estado: correo nuevo sincronizado\n"
         f"De: {sender or 'No disponible'}\n"
         f"Asunto: {subject or 'Sin asunto'}"
     )
@@ -319,6 +326,44 @@ def _send_whatsapp_rule_notification(conn, connection_id: int, rule_id: int, sub
         "Notificacion WhatsApp enviada por regla",
         {"rule_id": rule_id, "sent": sent, "subject": subject},
     )
+
+
+def _normalize_match_text(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", ascii_text.lower()).strip()
+
+
+def _significant_tokens(value: str | None) -> list[str]:
+    stopwords = {"de", "del", "la", "las", "el", "los", "un", "una", "y", "o", "en", "con", "para", "por"}
+    return [token for token in _normalize_match_text(value).split() if len(token) >= 3 and token not in stopwords]
+
+
+def _token_matches(expected: str, actual: str) -> bool:
+    if expected == actual:
+        return True
+    if expected in actual:
+        return True
+    if len(actual) >= 4 and expected.startswith(actual):
+        return True
+    if len(expected) >= 4 and actual.startswith(expected):
+        return True
+    return False
+
+
+def _flexible_text_match(expected: str | None, actual: str | None) -> tuple[bool, str]:
+    normalized_expected = _normalize_match_text(expected)
+    normalized_actual = _normalize_match_text(actual)
+    if not normalized_expected:
+        return True, "empty_expected"
+    if normalized_expected in normalized_actual:
+        return True, "literal_normalized"
+
+    expected_tokens = _significant_tokens(expected)
+    actual_tokens = _significant_tokens(actual)
+    if expected_tokens and all(any(_token_matches(expected_token, actual_token) for actual_token in actual_tokens) for expected_token in expected_tokens):
+        return True, "token_fuzzy"
+    return False, "no_match"
 
 
 def _matched_rule_for_message(
@@ -345,14 +390,20 @@ def _matched_rule_for_message(
         ),
         (organization_id, connection_id),
     ).fetchall()
-    sender = (sender or "").lower()
-    subject = (subject or "").lower()
+    diagnostics = []
 
     for rule in rules:
+        rule_diagnostic = {
+            "rule_id": rule["id"],
+            "rule_name": rule["name"],
+            "action_type": rule["action_type"],
+            "matched": False,
+            "checks": [],
+        }
         if rule["action_type"] == "ai_match":
             configuration = json.loads(rule["configuration"] or "{}")
             description = configuration.get("ai_description") or rule["name"]
-            if email_matches_ai_rule(
+            ai_matched = email_matches_ai_rule(
                 description,
                 {
                     "sender": sender,
@@ -361,19 +412,110 @@ def _matched_rule_for_message(
                     "snippet": snippet,
                     "has_attachments": has_attachments,
                 },
-            ):
-                return rule
+            )
+            rule_diagnostic["checks"].append(
+                {
+                    "field": "ai_description",
+                    "expected": description,
+                    "actual": {
+                        "sender": sender,
+                        "subject": subject,
+                        "snippet": snippet,
+                        "has_attachments": has_attachments,
+                    },
+                    "passed": ai_matched,
+                }
+            )
+            rule_diagnostic["matched"] = ai_matched
+            diagnostics.append(rule_diagnostic)
+            if ai_matched:
+                return rule, diagnostics
             continue
 
-        if rule["sender_contains"] and rule["sender_contains"].lower() not in sender:
-            continue
-        if rule["subject_contains"] and rule["subject_contains"].lower() not in subject:
-            continue
-        if rule["has_attachment"] is not None and bool(rule["has_attachment"]) != has_attachments:
-            continue
-        return rule
+        if rule["sender_contains"]:
+            expected_sender = rule["sender_contains"]
+            if "@" in expected_sender:
+                passed = expected_sender.lower() in (sender or "").lower()
+                match_type = "literal_email"
+            else:
+                passed, match_type = _flexible_text_match(expected_sender, sender)
+            rule_diagnostic["checks"].append(
+                {
+                    "field": "sender_contains",
+                    "expected": expected_sender,
+                    "actual": sender,
+                    "passed": passed,
+                    "match_type": match_type,
+                }
+            )
+            if not passed:
+                diagnostics.append(rule_diagnostic)
+                continue
+        if rule["subject_contains"]:
+            passed, match_type = _flexible_text_match(rule["subject_contains"], subject)
+            rule_diagnostic["checks"].append(
+                {
+                    "field": "subject_contains",
+                    "expected": rule["subject_contains"],
+                    "actual": subject,
+                    "passed": passed,
+                    "match_type": match_type,
+                }
+            )
+            if not passed:
+                diagnostics.append(rule_diagnostic)
+                continue
+        if rule["has_attachment"] is not None:
+            passed = bool(rule["has_attachment"]) == has_attachments
+            rule_diagnostic["checks"].append(
+                {
+                    "field": "has_attachment",
+                    "expected": bool(rule["has_attachment"]),
+                    "actual": has_attachments,
+                    "passed": passed,
+                    "match_type": "boolean",
+                }
+            )
+            if not passed:
+                diagnostics.append(rule_diagnostic)
+                continue
+        rule_diagnostic["matched"] = True
+        diagnostics.append(rule_diagnostic)
+        return rule, diagnostics
 
-    return None
+    return None, diagnostics
+
+
+def _ignored_message_metadata(
+    message: dict,
+    sender: str | None,
+    subject: str | None,
+    recipients: str | None,
+    received_at: str | None,
+    snippet: str | None,
+    has_attachments: bool,
+    rule_diagnostics: list[dict],
+) -> dict:
+    if not rule_diagnostics:
+        reason = "no_active_rules_for_connection"
+    elif any(rule.get("action_type") == "ai_match" for rule in rule_diagnostics):
+        reason = "no_ai_rule_matched"
+    else:
+        reason = "no_rule_matched"
+
+    return {
+        "ignore_reason": reason,
+        "gmail_message_id": message.get("id"),
+        "gmail_thread_id": message.get("threadId"),
+        "gmail_history_id": message.get("historyId"),
+        "subject": subject,
+        "sender": sender,
+        "recipients": recipients,
+        "received_at": received_at,
+        "snippet": snippet,
+        "has_attachments": has_attachments,
+        "evaluated_rules": rule_diagnostics,
+    }
 
 
 def _store_full_message(conn, access_token: str, organization_id: int, connection_id: int, message: dict) -> tuple[int, int, str | None]:
@@ -385,7 +527,7 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
     subject = _header(headers, "Subject")
     recipients = _header(headers, "To")
     snippet = message.get("snippet")
-    matched_rule = _matched_rule_for_message(
+    matched_rule, rule_diagnostics = _matched_rule_for_message(
         conn,
         organization_id,
         connection_id,
@@ -402,13 +544,17 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
             connection_id,
             "info",
             "gmail_message_ignored",
-            "Correo ignorado porque no coincide con reglas asociadas",
-            {
-                "gmail_message_id": message.get("id"),
-                "subject": subject,
-                "sender": sender,
-                "has_attachments": has_attachments,
-            },
+            f"Correo ignorado: \"{subject or 'Sin asunto'}\" no coincide con reglas asociadas",
+            _ignored_message_metadata(
+                message,
+                sender,
+                subject,
+                recipients,
+                received_at,
+                snippet,
+                has_attachments,
+                rule_diagnostics,
+            ),
         )
         return 0, 0, message.get("historyId")
 
@@ -510,9 +656,95 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
         )
 
     if stored:
+        _log_event(
+            conn,
+            organization_id,
+            connection_id,
+            "info",
+            "gmail_message_matched",
+            f"Correo sincronizado: \"{subject or 'Sin asunto'}\" coincide con la regla \"{matched_rule['name']}\"",
+            {
+                "gmail_message_id": message.get("id"),
+                "gmail_thread_id": message.get("threadId"),
+                "gmail_history_id": message.get("historyId"),
+                "subject": subject,
+                "sender": sender,
+                "recipients": recipients,
+                "received_at": received_at,
+                "snippet": snippet,
+                "has_attachments": has_attachments,
+                "matched_rule_id": matched_rule["id"],
+                "matched_rule_name": matched_rule["name"],
+                "evaluated_rules": rule_diagnostics,
+            },
+        )
+        create_followup_for_message(
+            conn,
+            organization_id,
+            connection_id,
+            matched_rule,
+            message_row_id,
+            message.get("threadId"),
+            message["id"],
+            subject,
+            sender,
+            received_at,
+        )
         _send_whatsapp_rule_notification(conn, connection_id, matched_rule["id"], subject, sender, snippet)
 
     return stored, attachments_stored, message.get("historyId")
+
+
+def _mark_deleted_messages(conn, organization_id: int, connection_id: int, gmail_message_ids: list[str]) -> int:
+    deleted = 0
+    deleted_at = datetime.now(timezone.utc).isoformat()
+    for gmail_message_id in dict.fromkeys(gmail_message_ids):
+        row = conn.execute(
+            sql(
+                """
+                SELECT id, subject, sender, recipients, received_at, matched_rule_id, matched_rule_name, status
+                FROM email_messages
+                WHERE google_connection_id = ? AND gmail_message_id = ?
+                LIMIT 1
+                """
+            ),
+            (connection_id, gmail_message_id),
+        ).fetchone()
+        if not row or row["status"] == "deleted_in_gmail":
+            continue
+
+        conn.execute(
+            sql(
+                """
+                UPDATE email_messages
+                SET status = 'deleted_in_gmail'
+                WHERE id = ?
+                """
+            ),
+            (row["id"],),
+        )
+        _log_event(
+            conn,
+            organization_id,
+            connection_id,
+            "warning",
+            "gmail_message_deleted",
+            f"Correo eliminado en Gmail: \"{row['subject'] or 'Sin asunto'}\"",
+            {
+                "email_message_id": row["id"],
+                "gmail_message_id": gmail_message_id,
+                "subject": row["subject"],
+                "sender": row["sender"],
+                "recipients": row["recipients"],
+                "received_at": str(row["received_at"]) if row["received_at"] else None,
+                "deleted_at": deleted_at,
+                "previous_status": row["status"],
+                "matched_rule_id": row["matched_rule_id"],
+                "matched_rule_name": row["matched_rule_name"],
+            },
+        )
+        deleted += 1
+    return deleted
 
 
 def _sync_history_range(organization_id: int, connection_id: int, start_history_id: str) -> GmailSyncResponse:
@@ -526,19 +758,24 @@ def _sync_history_range(organization_id: int, connection_id: int, start_history_
         "/users/me/history",
         {
             "startHistoryId": start_history_id,
-            "historyTypes": "messageAdded",
         },
     )
     history_items = history_response.get("history") or []
     message_ids: list[str] = []
+    deleted_message_ids: list[str] = []
     for history in history_items:
         for added in history.get("messagesAdded") or []:
             message = added.get("message") or {}
             if message.get("id"):
                 message_ids.append(message["id"])
+        for deleted in history.get("messagesDeleted") or []:
+            message = deleted.get("message") or {}
+            if message.get("id"):
+                deleted_message_ids.append(message["id"])
 
     stored = 0
     attachments_stored = 0
+    deleted_tracked = 0
     latest_history_id = history_response.get("historyId") or start_history_id
 
     with db_session() as conn:
@@ -557,19 +794,30 @@ def _sync_history_range(organization_id: int, connection_id: int, start_history_
             attachments_stored += added_attachments
             latest_history_id = history_id or latest_history_id
 
+        deleted_tracked = _mark_deleted_messages(conn, organization_id, connection_id, deleted_message_ids)
+
         conn.execute(
             sql("UPDATE google_connections SET gmail_history_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"),
             (latest_history_id, connection_id),
         )
-        _log_event(
-            conn,
-            organization_id,
-            connection_id,
-            "info",
-            "gmail_history_synced",
-            "Historial Gmail sincronizado",
-            {"fetched": len(message_ids), "stored": stored, "attachments_stored": attachments_stored},
-        )
+        if message_ids or deleted_message_ids:
+            _log_event(
+                conn,
+                organization_id,
+                connection_id,
+                "info",
+                "gmail_history_synced",
+                "Gmail reviso cambios recientes",
+                {
+                    "message_ids_found": len(message_ids),
+                    "deleted_ids_found": len(deleted_message_ids),
+                    "stored": stored,
+                    "ignored": max(len(message_ids) - stored, 0),
+                    "deleted_tracked": deleted_tracked,
+                    "attachments_stored": attachments_stored,
+                },
+            )
+        evaluate_pending_followups(conn, connection_id)
 
     return GmailSyncResponse(
         google_connection_id=connection_id,
@@ -586,6 +834,7 @@ def sync_connection(
     max_results: int = Query(10, ge=1, le=25),
     user: dict = CurrentUser,
 ) -> GmailSyncResponse:
+    require_connection_access(user, connection_id)
     with db_session() as conn:
         connection = _get_connection(conn, connection_id, user["organization_id"])
         _ensure_connection_has_rules(conn, user["organization_id"], connection_id)
@@ -623,6 +872,7 @@ def sync_connection(
                 sql("UPDATE google_connections SET gmail_history_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"),
                 (latest_history_id, connection_id),
             )
+        evaluate_pending_followups(conn, connection_id)
 
     return GmailSyncResponse(
         google_connection_id=connection_id,
@@ -639,6 +889,7 @@ def watch_connection(
     payload: GmailWatchRequest,
     user: dict = CurrentUser,
 ) -> GmailWatchResponse:
+    require_owner(user)
     if not GOOGLE_PUBSUB_TOPIC:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Falta GOOGLE_PUBSUB_TOPIC en backend/.env")
 
@@ -670,6 +921,7 @@ def watch_connection(
 
 @router.delete("/connections/{connection_id}/watch", response_model=GmailWatchResponse)
 def stop_watch_connection(connection_id: int, user: dict = CurrentUser) -> GmailWatchResponse:
+    require_owner(user)
     with db_session() as conn:
         connection = _get_connection(conn, connection_id, user["organization_id"])
 
@@ -715,6 +967,7 @@ def stop_watch_connection(connection_id: int, user: dict = CurrentUser) -> Gmail
 
 @router.post("/connections/{connection_id}/history-sync", response_model=GmailSyncResponse)
 def sync_connection_history(connection_id: int, user: dict = CurrentUser) -> GmailSyncResponse:
+    require_owner(user)
     with db_session() as conn:
         connection = _get_connection(conn, connection_id, user["organization_id"])
         start_history_id = connection["gmail_history_id"]
@@ -764,15 +1017,6 @@ def gmail_pubsub_push(payload: PubSubPushRequest) -> dict:
             return {"status": "ignored", "reason": "connection has no active rules"}
 
         previous_history_id = connection["gmail_history_id"]
-        _log_event(
-            conn,
-            connection["organization_id"],
-            connection["id"],
-            "info",
-            "gmail_pubsub_received",
-            "Notificacion Pub/Sub recibida",
-            data,
-        )
 
     if previous_history_id:
         result = _sync_history_range(connection["organization_id"], connection["id"], previous_history_id)
@@ -792,6 +1036,10 @@ def list_messages(
     connection_id: int | None = Query(None),
     user: dict = CurrentUser,
 ) -> list[EmailMessageResponse]:
+    if user.get("role") != "owner":
+        connection_id = user.get("assigned_connection_id")
+        if not connection_id:
+            return []
     with db_session() as conn:
         if connection_id:
             rows = conn.execute(

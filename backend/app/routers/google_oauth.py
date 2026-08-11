@@ -37,6 +37,9 @@ def _ensure_google_config() -> None:
 def _serialize(row) -> GoogleConnectionResponse:
     return GoogleConnectionResponse(
         id=row["id"],
+        assigned_user_id=row["assigned_user_id"] if "assigned_user_id" in row.keys() else None,
+        assigned_user_email=row["assigned_user_email"] if "assigned_user_email" in row.keys() else None,
+        assigned_user_name=row["assigned_user_name"] if "assigned_user_name" in row.keys() else None,
         email=row["email"],
         display_name=row["display_name"],
         purpose=row["purpose"],
@@ -50,6 +53,12 @@ def _serialize(row) -> GoogleConnectionResponse:
         whatsapp_contact_name=row["whatsapp_contact_name"],
         whatsapp_last_message_id=row["whatsapp_last_message_id"],
         whatsapp_last_message_at=str(row["whatsapp_last_message_at"]) if row["whatsapp_last_message_at"] else None,
+        whatsapp_notifications_enabled=bool(row["whatsapp_notifications_enabled"]) if "whatsapp_notifications_enabled" in row.keys() else True,
+        whatsapp_notify_new_email=bool(row["whatsapp_notify_new_email"]) if "whatsapp_notify_new_email" in row.keys() else True,
+        whatsapp_notify_followup_overdue=bool(row["whatsapp_notify_followup_overdue"]) if "whatsapp_notify_followup_overdue" in row.keys() else True,
+        whatsapp_notify_followup_warning=bool(row["whatsapp_notify_followup_warning"]) if "whatsapp_notify_followup_warning" in row.keys() else True,
+        whatsapp_notify_followup_late=bool(row["whatsapp_notify_followup_late"]) if "whatsapp_notify_followup_late" in row.keys() else True,
+        whatsapp_notify_followup_responded=bool(row["whatsapp_notify_followup_responded"]) if "whatsapp_notify_followup_responded" in row.keys() else True,
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )
@@ -59,13 +68,31 @@ def _serialize(row) -> GoogleConnectionResponse:
 def start_google_oauth(
     display_name: str | None = Query(None, max_length=160),
     purpose: str | None = Query(None, max_length=800),
+    connection_id: int | None = Query(None),
     user: dict = CurrentUser,
 ) -> GoogleOAuthStartResponse:
     _ensure_google_config()
+    with db_session() as conn:
+        target_connection_id = connection_id
+        if user.get("role") != "owner" and target_connection_id is None:
+            target_connection_id = user.get("assigned_connection_id")
+        if target_connection_id:
+            connection = conn.execute(
+                sql("SELECT id, display_name, purpose FROM google_connections WHERE id = ? AND organization_id = ?"),
+                (target_connection_id, user["organization_id"]),
+            ).fetchone()
+            if not connection:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Conexion no encontrada")
+            if user.get("role") != "owner" and target_connection_id != user.get("assigned_connection_id"):
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Solo puedes vincular tu cuenta asignada")
+            display_name = display_name or connection["display_name"]
+            purpose = purpose or connection["purpose"]
+
     state = create_signed_payload(
         {
             "sub": user["id"],
             "organization_id": user["organization_id"],
+            "connection_id": target_connection_id,
             "display_name": (display_name or "").strip(),
             "purpose": (purpose or "").strip(),
             "nonce": str(time.time_ns()),
@@ -166,6 +193,7 @@ def _exchange_and_store_connection(code: str, state_payload: dict) -> GoogleConn
     purpose = state_payload.get("purpose") or "Cuenta conectada por OAuth"
 
     with db_session() as conn:
+        target_connection_id = state_payload.get("connection_id")
         existing = conn.execute(
             sql("SELECT encrypted_refresh_token FROM google_connections WHERE organization_id = ? AND email = ?"),
             (state_payload["organization_id"], email),
@@ -179,6 +207,64 @@ def _exchange_and_store_connection(code: str, state_payload: dict) -> GoogleConn
                 status.HTTP_400_BAD_REQUEST,
                 "Google no devolvio refresh_token. Reintenta con prompt=consent o revoca el acceso anterior.",
             )
+
+        if target_connection_id:
+            target = conn.execute(
+                sql("SELECT * FROM google_connections WHERE id = ? AND organization_id = ?"),
+                (target_connection_id, state_payload["organization_id"]),
+            ).fetchone()
+            if not target:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Conexion pendiente no encontrada")
+            conflicting = conn.execute(
+                sql("SELECT id FROM google_connections WHERE organization_id = ? AND email = ? AND id <> ?"),
+                (state_payload["organization_id"], email, target_connection_id),
+            ).fetchone()
+            if conflicting:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Esa cuenta Google ya esta vinculada en la organizacion")
+            conn.execute(
+                sql(
+                    """
+                    UPDATE google_connections
+                    SET connected_by_user_id = ?,
+                        google_user_id = ?,
+                        display_name = ?,
+                        purpose = ?,
+                        email = ?,
+                        encrypted_refresh_token = ?,
+                        access_token_expires_at = ?,
+                        scopes = ?,
+                        status = 'connected',
+                        gmail_history_id = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND organization_id = ?
+                    """
+                ),
+                (
+                    state_payload["sub"],
+                    profile.get("emailAddress"),
+                    display_name,
+                    purpose,
+                    email,
+                    encrypted_refresh_token,
+                    expires_at if using_postgres() else expires_at.isoformat(),
+                    json.dumps(scopes),
+                    profile.get("historyId"),
+                    target_connection_id,
+                    state_payload["organization_id"],
+                ),
+            )
+            row = conn.execute(
+                sql(
+                    """
+                    SELECT gc.*, u.email AS assigned_user_email, u.name AS assigned_user_name
+                    FROM google_connections gc
+                    LEFT JOIN users u ON u.id = gc.assigned_user_id
+                    WHERE gc.id = ?
+                    """
+                ),
+                (target_connection_id,),
+            ).fetchone()
+            return _serialize(row)
 
         if using_postgres():
             row = conn.execute(
@@ -270,7 +356,14 @@ def _exchange_and_store_connection(code: str, state_payload: dict) -> GoogleConn
                 ),
             )
             row = conn.execute(
-                sql("SELECT * FROM google_connections WHERE organization_id = ? AND email = ?"),
+                sql(
+                    """
+                    SELECT gc.*, u.email AS assigned_user_email, u.name AS assigned_user_name
+                    FROM google_connections gc
+                    LEFT JOIN users u ON u.id = gc.assigned_user_id
+                    WHERE gc.organization_id = ? AND gc.email = ?
+                    """
+                ),
                 (state_payload["organization_id"], email),
             ).fetchone()
 

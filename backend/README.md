@@ -37,6 +37,8 @@ DATABASE_URL=postgresql://email_assistance:email_assistance@localhost:5432/email
 DEMO_USER_EMAIL=demo@example.com
 DEMO_USER_PASSWORD=Demo123!
 DEMO_ORGANIZATION_NAME=Organizacion Demo
+SUPER_ROOT_EMAIL=master@emailasistance.com
+SUPER_ROOT_PASSWORD=123
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://127.0.0.1:8000/google/oauth/callback
@@ -47,6 +49,7 @@ WHATSAPP_NUMBER_ASSISTANT=
 WHATSAPP_SEND_TEXT_URL=
 WHATSAPP_SEND_TEXT_TOKEN=
 WHATSAPP_SEND_SESSION=email-assistance
+NAGER_DATE_BASE_URL=https://date.nager.at/api/v4/Holidays
 ```
 
 Para desarrollo sin Postgres, sobrescribe `DATABASE_URL` con:
@@ -139,6 +142,10 @@ V1 implementada:
 - asociar numeros WhatsApp a cuentas por codigo de verificacion
 - responder mensajes entrantes de WhatsApp desde el backend
 - activar notificaciones WhatsApp por regla y por cuenta
+- activar seguimiento de respuesta por regla
+- evaluar seguimientos pendientes y vencidos por cron
+- seguimiento manual por correo y automatico por cuenta
+- migraciones versionadas en `backend/app/migrations`
 
 ## Configurar WhatsApp
 
@@ -161,6 +168,69 @@ POST https://tu-backend-publico/whatsapp/webhook
 ```
 
 El backend acepta el payload completo del proveedor y guarda solo metadatos utiles: numero origen, numero alterno, nombre, id del mensaje, sesion, cuerpo, timestamp y datos de respuesta. Si el numero esta pendiente y el mensaje trae el codigo, se asocia la cuenta. Si el numero ya esta conectado, el asistente responde limitado al contexto de reglas con notificaciones WhatsApp activas. Si el numero es desconocido, se bloquea el flujo y se responde en la conversacion.
+
+## Seguimiento de respuestas
+
+El modulo de seguimientos complementa las reglas existentes. Una regla puede:
+
+- sincronizar correos importantes
+- notificar por WhatsApp cuando entra un correo
+- crear seguimiento de respuesta para medir si la cuenta conectada respondio el hilo
+
+La respuesta valida para V1 es:
+
+```text
+mismo gmail_thread_id
++
+mensaje posterior al correo inicial
++
+remitente igual a la cuenta Gmail conectada
+```
+
+Endpoints principales:
+
+```text
+PATCH /automation/rules/{rule_id}/followup
+PATCH /google-connections/{connection_id}/followup
+GET /followups
+GET /followups/summary
+POST /followups
+POST /followups/evaluate
+```
+
+El cron del contenedor ejecuta:
+
+```text
+*/10 * * * * python -m app.jobs.evaluate_followups
+```
+
+Este job revisa seguimientos `pending` y `overdue`, consulta el hilo en Gmail, marca respuestas y envia WhatsApp cuando un seguimiento vencido tiene esa opcion activada en la regla.
+
+## Migraciones
+
+Todo cambio de base de datos debe vivir en una migracion versionada:
+
+```text
+backend/app/migrations
+```
+
+El runner se registra en:
+
+```text
+backend/app/migrations/runner.py
+```
+
+Al iniciar, `init_db()` ejecuta las migraciones pendientes y luego siembra el usuario demo.
+
+Para validar con SQLite:
+
+```powershell
+cd backend
+$env:DATABASE_URL="sqlite"
+.\.venv\Scripts\python.exe -c "from app.db import init_db; init_db(); print('ok')"
+```
+
+Regla de trabajo: no agregar tablas, columnas o indices nuevos directamente en routers, jobs o helpers. Primero crear migracion y registrarla en `MIGRATIONS`.
 
 Pendiente V2:
 
@@ -187,6 +257,17 @@ prompt=consent
 email: demo@example.com
 password: Demo123!
 ```
+
+## Usuario super root
+
+El usuario super root administra usuarios root. No trabaja dentro de una organizacion.
+
+```text
+email: master@emailasistance.com
+password: 123
+```
+
+Cada usuario root puede crear sus propias organizaciones, cuentas, reglas y configuraciones. Un root no ve organizaciones ni datos creados por otros roots.
 
 Tambien puedes consultar:
 

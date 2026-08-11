@@ -18,13 +18,16 @@
 - Vista frontend de cuentas, correos, adjuntos, reglas y eventos.
 - Docker Compose con frontend, backend y Postgres.
 - Healthcheck de Postgres y backend.
+- Migraciones versionadas para cambios de base de datos.
+- Seguimiento de respuestas por regla, por cuenta y manual por correo.
+- Evaluacion periodica de seguimientos con horario laboral basico.
 
 ## V2 Recomendada
 
 - Reemplazar token HMAC casero por JWT formal o sesiones.
 - Mover `APP_SECRET` a gestor de secretos.
 - Migrar cifrado de refresh tokens a KMS o Vault.
-- Agregar Alembic para migraciones formales.
+- Fortalecer el runner de migraciones o migrar a Alembic si el proyecto crece en equipo.
 - Agregar workers y cola solo cuando el procesamiento de adjuntos sea pesado.
 - Procesar adjuntos con OCR, extraccion de texto o IA.
 - Crear acciones de reglas: clasificar, extraer, exportar y notificar.

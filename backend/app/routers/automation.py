@@ -1,9 +1,9 @@
 import json
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.db import db_session, insert_and_get_id, sql, using_postgres
-from app.dependencies import CurrentUser
+from app.dependencies import CurrentUser, require_owner
 from app.openai_client import draft_rule_from_text
 from app.schemas import (
     AutomationRuleCreate,
@@ -11,11 +11,38 @@ from app.schemas import (
     AutomationRuleUpdate,
     RuleDraftFromTextRequest,
     RuleDraftResponse,
+    RuleFollowupConfigUpdate,
     RuleWhatsAppNotificationsUpdate,
     SystemEventResponse,
 )
 
 router = APIRouter(prefix="/automation", tags=["automation"])
+
+BUSINESS_EVENT_TYPES = (
+    "gmail_message_matched",
+    "gmail_message_ignored",
+    "gmail_message_deleted",
+    "whatsapp_email_notification_sent",
+    "whatsapp_connected",
+    "whatsapp_blocked_unknown_number",
+    "followup_whatsapp_warning_sent",
+    "followup_whatsapp_overdue_sent",
+    "followup_whatsapp_escalation_sent",
+    "followup_whatsapp_late_response_sent",
+    "followup_whatsapp_response_sent",
+    "followup_evaluation_failed",
+    "gmail_pubsub_unmatched",
+    "gmail_pubsub_ignored_no_rules",
+)
+
+
+def _normalize_event_date_filter(value: str | None, end_of_day: bool = False) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    if len(normalized) == 10:
+        return f"{normalized} {'23:59:59' if end_of_day else '00:00:00'}"
+    return normalized.replace("T", " ")[:19]
 
 
 def _serialize_rule(row) -> AutomationRuleResponse:
@@ -93,15 +120,35 @@ def _rule_query_by_id() -> str:
 @router.get("/rules", response_model=list[AutomationRuleResponse])
 def list_rules(user: dict = CurrentUser) -> list[AutomationRuleResponse]:
     with db_session() as conn:
-        rows = conn.execute(
-            sql(_rules_query()),
-            (user["organization_id"],),
-        ).fetchall()
+        if user.get("role") == "owner":
+            rows = conn.execute(
+                sql(_rules_query()),
+                (user["organization_id"],),
+            ).fetchall()
+        elif user.get("assigned_connection_id"):
+            rows = conn.execute(
+                sql(
+                    """
+                    SELECT ar.*,
+                           rc.google_connection_id AS connection_ids,
+                           CASE WHEN rc.whatsapp_notifications_enabled THEN rc.google_connection_id ELSE NULL END AS whatsapp_enabled_connection_ids
+                    FROM automation_rules ar
+                    JOIN rule_connections rc ON rc.rule_id = ar.id
+                    WHERE ar.organization_id = ?
+                      AND rc.google_connection_id = ?
+                    ORDER BY ar.created_at DESC
+                    """
+                ),
+                (user["organization_id"], user["assigned_connection_id"]),
+            ).fetchall()
+        else:
+            rows = []
     return [_serialize_rule(row) for row in rows]
 
 
 @router.post("/rules", response_model=AutomationRuleResponse, status_code=status.HTTP_201_CREATED)
 def create_rule(payload: AutomationRuleCreate, user: dict = CurrentUser) -> AutomationRuleResponse:
+    require_owner(user)
     with db_session() as conn:
         for connection_id in payload.connection_ids:
             connection = conn.execute(
@@ -158,6 +205,7 @@ def create_rule(payload: AutomationRuleCreate, user: dict = CurrentUser) -> Auto
 
 @router.patch("/rules/{rule_id}", response_model=AutomationRuleResponse)
 def update_rule(rule_id: int, payload: AutomationRuleUpdate, user: dict = CurrentUser) -> AutomationRuleResponse:
+    require_owner(user)
     with db_session() as conn:
         rule = conn.execute(
             sql("SELECT id FROM automation_rules WHERE id = ? AND organization_id = ?"),
@@ -241,6 +289,7 @@ def update_rule(rule_id: int, payload: AutomationRuleUpdate, user: dict = Curren
 
 @router.post("/rules/draft-from-text", response_model=RuleDraftResponse)
 def draft_from_text(payload: RuleDraftFromTextRequest, user: dict = CurrentUser) -> RuleDraftResponse:
+    require_owner(user)
     with db_session() as conn:
         for connection_id in payload.connection_ids:
             connection = conn.execute(
@@ -259,6 +308,7 @@ def update_rule_whatsapp_notifications(
     payload: RuleWhatsAppNotificationsUpdate,
     user: dict = CurrentUser,
 ) -> AutomationRuleResponse:
+    require_owner(user)
     with db_session() as conn:
         rule = conn.execute(
             sql("SELECT id FROM automation_rules WHERE id = ? AND organization_id = ?"),
@@ -298,8 +348,54 @@ def update_rule_whatsapp_notifications(
     return _serialize_rule(row)
 
 
+@router.patch("/rules/{rule_id}/followup", response_model=AutomationRuleResponse)
+def update_rule_followup_config(
+    rule_id: int,
+    payload: RuleFollowupConfigUpdate,
+    user: dict = CurrentUser,
+) -> AutomationRuleResponse:
+    require_owner(user)
+    if payload.response_time_minutes < 1:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El tiempo maximo de respuesta debe ser mayor a cero")
+    if payload.escalation_minutes is not None and payload.escalation_minutes < 1:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El tiempo de escalamiento debe ser mayor a cero")
+    if payload.warn_before_minutes is not None and payload.warn_before_minutes < 1:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El preaviso debe ser mayor a cero")
+
+    with db_session() as conn:
+        rule = conn.execute(
+            sql("SELECT * FROM automation_rules WHERE id = ? AND organization_id = ?"),
+            (rule_id, user["organization_id"]),
+        ).fetchone()
+        if not rule:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Regla no encontrada")
+
+        configuration = json.loads(rule["configuration"] or "{}")
+        configuration["followup"] = {
+            "enabled": payload.enabled,
+            "response_time_minutes": payload.response_time_minutes,
+            "notify_whatsapp_on_overdue": payload.notify_whatsapp_on_overdue,
+            "warn_before_minutes": payload.warn_before_minutes,
+            "escalation_minutes": payload.escalation_minutes,
+        }
+        conn.execute(
+            sql(
+                """
+                UPDATE automation_rules
+                SET configuration = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND organization_id = ?
+                """
+            ),
+            (json.dumps(configuration), rule_id, user["organization_id"]),
+        )
+        row = conn.execute(sql(_rule_query_by_id()), (rule_id,)).fetchone()
+
+    return _serialize_rule(row)
+
+
 @router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_rule(rule_id: int, user: dict = CurrentUser) -> None:
+    require_owner(user)
     with db_session() as conn:
         cursor = conn.execute(
             sql("DELETE FROM automation_rules WHERE id = ? AND organization_id = ?"),
@@ -312,18 +408,50 @@ def delete_rule(rule_id: int, user: dict = CurrentUser) -> None:
 
 
 @router.get("/events", response_model=list[SystemEventResponse])
-def list_events(user: dict = CurrentUser) -> list[SystemEventResponse]:
+def list_events(
+    connection_id: int | None = Query(None),
+    event_type: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    user: dict = CurrentUser,
+) -> list[SystemEventResponse]:
+    require_owner(user)
+    filters = ["(organization_id = ? OR organization_id IS NULL)"]
+    params: list[object] = [user["organization_id"]]
+
+    if connection_id is not None:
+        filters.append("google_connection_id = ?")
+        params.append(connection_id)
+    if event_type == "business":
+        placeholders = ", ".join("?" for _ in BUSINESS_EVENT_TYPES)
+        filters.append(f"event_type IN ({placeholders})")
+        params.extend(BUSINESS_EVENT_TYPES)
+    elif event_type:
+        filters.append("event_type = ?")
+        params.append(event_type)
+    normalized_date_from = _normalize_event_date_filter(date_from)
+    normalized_date_to = _normalize_event_date_filter(date_to, end_of_day=True)
+
+    if normalized_date_from:
+        filters.append("created_at >= ?")
+        params.append(normalized_date_from)
+    if normalized_date_to:
+        filters.append("created_at <= ?")
+        params.append(normalized_date_to)
+
+    params.append(limit)
     with db_session() as conn:
         rows = conn.execute(
             sql(
-                """
+                f"""
                 SELECT *
                 FROM system_events
-                WHERE organization_id = ? OR organization_id IS NULL
+                WHERE {" AND ".join(filters)}
                 ORDER BY created_at DESC
-                LIMIT 50
+                LIMIT ?
                 """
             ),
-            (user["organization_id"],),
+            tuple(params),
         ).fetchall()
     return [_serialize_event(row) for row in rows]

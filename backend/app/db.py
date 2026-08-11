@@ -5,7 +5,7 @@ from typing import Any, Iterator
 import psycopg
 from psycopg.rows import dict_row
 
-from app.config import ATTACHMENTS_DIR, DATABASE_URL, DATA_DIR, DATABASE_PATH, DEMO_USER
+from app.config import ATTACHMENTS_DIR, DATABASE_URL, DATA_DIR, DATABASE_PATH, DEMO_USER, SUPER_ROOT_USER
 from app.security import hash_password
 
 
@@ -48,13 +48,11 @@ def init_db() -> None:
     ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     with db_session() as conn:
-        if using_postgres():
-            for statement in POSTGRES_SCHEMA:
-                conn.execute(statement)
-        else:
-            conn.executescript(SQLITE_SCHEMA)
-        ensure_schema_columns(conn)
+        from app.migrations.runner import run_migrations
+
+        run_migrations(conn)
         seed_demo_user(conn)
+        seed_super_root_user(conn)
 
 
 def insert_and_get_id(conn: Any, statement: str, values: tuple) -> int:
@@ -69,11 +67,12 @@ def insert_and_get_id(conn: Any, statement: str, values: tuple) -> int:
 def seed_demo_user(conn: Any) -> None:
     user = conn.execute(sql("SELECT id FROM users WHERE email = ?"), (DEMO_USER["email"],)).fetchone()
     if user:
+        conn.execute(sql("UPDATE users SET platform_role = 'root' WHERE id = ?"), (user["id"],))
         return
 
     user_id = insert_and_get_id(
         conn,
-        "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+        "INSERT INTO users (name, email, password_hash, platform_role) VALUES (?, ?, ?, 'root')",
         (DEMO_USER["name"], DEMO_USER["email"], hash_password(DEMO_USER["password"])),
     )
     organization_id = insert_and_get_id(
@@ -84,6 +83,19 @@ def seed_demo_user(conn: Any) -> None:
     conn.execute(
         sql("INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, 'owner')"),
         (organization_id, user_id),
+    )
+
+
+def seed_super_root_user(conn: Any) -> None:
+    user = conn.execute(sql("SELECT id FROM users WHERE email = ?"), (SUPER_ROOT_USER["email"],)).fetchone()
+    if user:
+        conn.execute(sql("UPDATE users SET platform_role = 'super_root' WHERE id = ?"), (user["id"],))
+        return
+
+    insert_and_get_id(
+        conn,
+        "INSERT INTO users (name, email, password_hash, platform_role) VALUES (?, ?, ?, 'super_root')",
+        (SUPER_ROOT_USER["name"], SUPER_ROOT_USER["email"], hash_password(SUPER_ROOT_USER["password"])),
     )
 
 
@@ -124,6 +136,34 @@ def ensure_schema_columns(conn: Any) -> None:
             """
         )
         conn.execute("ALTER TABLE rule_connections ADD COLUMN IF NOT EXISTS whatsapp_notifications_enabled BOOLEAN NOT NULL DEFAULT FALSE")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS email_followups (
+                id SERIAL PRIMARY KEY,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                google_connection_id INTEGER NOT NULL REFERENCES google_connections(id) ON DELETE CASCADE,
+                automation_rule_id INTEGER REFERENCES automation_rules(id) ON DELETE SET NULL,
+                email_message_id INTEGER REFERENCES email_messages(id) ON DELETE CASCADE,
+                gmail_thread_id TEXT NOT NULL,
+                initial_message_id TEXT NOT NULL,
+                subject TEXT,
+                sender TEXT,
+                received_at TIMESTAMPTZ,
+                status TEXT NOT NULL DEFAULT 'pending',
+                response_due_at TIMESTAMPTZ,
+                first_response_at TIMESTAMPTZ,
+                response_time_minutes INTEGER,
+                message_count INTEGER NOT NULL DEFAULT 1,
+                last_message_at TIMESTAMPTZ,
+                last_message_from TEXT,
+                notified_overdue_at TIMESTAMPTZ,
+                escalated_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (email_message_id)
+            )
+            """
+        )
         return
 
     connection_columns = {row["name"] for row in conn.execute("PRAGMA table_info(google_connections)").fetchall()}
@@ -182,6 +222,38 @@ def ensure_schema_columns(conn: Any) -> None:
     rule_connection_columns = {row["name"] for row in conn.execute("PRAGMA table_info(rule_connections)").fetchall()}
     if "whatsapp_notifications_enabled" not in rule_connection_columns:
         conn.execute("ALTER TABLE rule_connections ADD COLUMN whatsapp_notifications_enabled INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_followups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL,
+            google_connection_id INTEGER NOT NULL,
+            automation_rule_id INTEGER,
+            email_message_id INTEGER,
+            gmail_thread_id TEXT NOT NULL,
+            initial_message_id TEXT NOT NULL,
+            subject TEXT,
+            sender TEXT,
+            received_at TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            response_due_at TEXT,
+            first_response_at TEXT,
+            response_time_minutes INTEGER,
+            message_count INTEGER NOT NULL DEFAULT 1,
+            last_message_at TEXT,
+            last_message_from TEXT,
+            notified_overdue_at TEXT,
+            escalated_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (email_message_id),
+            FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+            FOREIGN KEY (google_connection_id) REFERENCES google_connections(id) ON DELETE CASCADE,
+            FOREIGN KEY (automation_rule_id) REFERENCES automation_rules(id) ON DELETE SET NULL,
+            FOREIGN KEY (email_message_id) REFERENCES email_messages(id) ON DELETE CASCADE
+        )
+        """
+    )
 
 
 SQLITE_SCHEMA = """
@@ -190,6 +262,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    platform_role TEXT NOT NULL DEFAULT 'root',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -317,6 +390,35 @@ CREATE TABLE IF NOT EXISTS system_events (
     FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (google_connection_id) REFERENCES google_connections(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS email_followups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id INTEGER NOT NULL,
+    google_connection_id INTEGER NOT NULL,
+    automation_rule_id INTEGER,
+    email_message_id INTEGER,
+    gmail_thread_id TEXT NOT NULL,
+    initial_message_id TEXT NOT NULL,
+    subject TEXT,
+    sender TEXT,
+    received_at TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    response_due_at TEXT,
+    first_response_at TEXT,
+    response_time_minutes INTEGER,
+    message_count INTEGER NOT NULL DEFAULT 1,
+    last_message_at TEXT,
+    last_message_from TEXT,
+    notified_overdue_at TEXT,
+    escalated_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (email_message_id),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+    FOREIGN KEY (google_connection_id) REFERENCES google_connections(id) ON DELETE CASCADE,
+    FOREIGN KEY (automation_rule_id) REFERENCES automation_rules(id) ON DELETE SET NULL,
+    FOREIGN KEY (email_message_id) REFERENCES email_messages(id) ON DELETE CASCADE
+);
 """
 
 POSTGRES_SCHEMA = [
@@ -326,6 +428,7 @@ POSTGRES_SCHEMA = [
         name TEXT NOT NULL,
         email TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
+        platform_role TEXT NOT NULL DEFAULT 'root',
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -446,6 +549,32 @@ POSTGRES_SCHEMA = [
         whatsapp_notifications_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (rule_id, google_connection_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS email_followups (
+        id SERIAL PRIMARY KEY,
+        organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        google_connection_id INTEGER NOT NULL REFERENCES google_connections(id) ON DELETE CASCADE,
+        automation_rule_id INTEGER REFERENCES automation_rules(id) ON DELETE SET NULL,
+        email_message_id INTEGER REFERENCES email_messages(id) ON DELETE CASCADE,
+        gmail_thread_id TEXT NOT NULL,
+        initial_message_id TEXT NOT NULL,
+        subject TEXT,
+        sender TEXT,
+        received_at TIMESTAMPTZ,
+        status TEXT NOT NULL DEFAULT 'pending',
+        response_due_at TIMESTAMPTZ,
+        first_response_at TIMESTAMPTZ,
+        response_time_minutes INTEGER,
+        message_count INTEGER NOT NULL DEFAULT 1,
+        last_message_at TIMESTAMPTZ,
+        last_message_from TEXT,
+        notified_overdue_at TIMESTAMPTZ,
+        escalated_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (email_message_id)
     )
     """,
 ]

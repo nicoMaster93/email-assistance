@@ -69,4 +69,6 @@ npm run build
 - No reemplazar la separacion usuario/organizacion/conexion.
 - Filtrar siempre por `organization_id` en recursos multi-tenant.
 - No guardar `refresh_token` en texto plano; actualmente se cifra con AES-GCM usando `APP_SECRET`.
+- Todo cambio de base de datos debe implementarse como migracion versionada en `backend/app/migrations`.
+- No agregar tablas, columnas o indices nuevos directamente en routers/jobs; crea una migracion y registrala en `backend/app/migrations/runner.py`.
 - Evitar refactors grandes si no son necesarios para la tarea.

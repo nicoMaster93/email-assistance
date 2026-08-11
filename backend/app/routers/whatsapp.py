@@ -8,9 +8,9 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from app.config import WHATSAPP_NUMBER_ASSISTANT
 from app.db import db_session, sql
-from app.dependencies import CurrentUser
+from app.dependencies import CurrentUser, require_owner
 from app.openai_client import answer_whatsapp_assistant
-from app.schemas import WhatsAppSetupRequest, WhatsAppSetupResponse, WhatsAppWebhookRequest
+from app.schemas import WhatsAppNotificationPreferencesUpdate, WhatsAppSetupRequest, WhatsAppSetupResponse, WhatsAppWebhookRequest
 from app.whatsapp_client import send_whatsapp_text, send_whatsapp_text_result, whatsapp_chat_id_from_number
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
@@ -153,6 +153,7 @@ def start_whatsapp_setup(
     payload: WhatsAppSetupRequest,
     user: dict = CurrentUser,
 ) -> WhatsAppSetupResponse:
+    require_owner(user)
     assistant_number = _normalize_phone(WHATSAPP_NUMBER_ASSISTANT)
     if not assistant_number:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Falta WHATSAPP_NUMBER_ASSISTANT en backend/.env")
@@ -196,6 +197,50 @@ def start_whatsapp_setup(
         whatsapp_url=whatsapp_url,
         status="pending",
     )
+
+
+@router.patch("/connections/{connection_id}/preferences")
+def update_whatsapp_preferences(
+    connection_id: int,
+    payload: WhatsAppNotificationPreferencesUpdate,
+    user: dict = CurrentUser,
+) -> dict:
+    require_owner(user)
+    with db_session() as conn:
+        connection = conn.execute(
+            sql("SELECT id FROM google_connections WHERE id = ? AND organization_id = ?"),
+            (connection_id, user["organization_id"]),
+        ).fetchone()
+        if not connection:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Conexion no encontrada")
+
+        conn.execute(
+            sql(
+                """
+                UPDATE google_connections
+                SET whatsapp_notifications_enabled = ?,
+                    whatsapp_notify_new_email = ?,
+                    whatsapp_notify_followup_overdue = ?,
+                    whatsapp_notify_followup_warning = ?,
+                    whatsapp_notify_followup_late = ?,
+                    whatsapp_notify_followup_responded = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND organization_id = ?
+                """
+            ),
+            (
+                payload.notifications_enabled,
+                payload.notify_new_email,
+                payload.notify_followup_overdue,
+                payload.notify_followup_warning,
+                payload.notify_followup_late,
+                payload.notify_followup_responded,
+                connection_id,
+                user["organization_id"],
+            ),
+        )
+
+    return {"status": "ok", "google_connection_id": connection_id}
 
 
 @router.post("/webhook")

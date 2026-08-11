@@ -12,6 +12,26 @@ class LoginResponse(BaseModel):
     user: dict
 
 
+class UserProfileUpdate(BaseModel):
+    name: str | None = None
+    email: EmailStr | None = None
+    password: str | None = None
+
+
+class RootUserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+    platform_role: str
+    created_at: str | None = None
+
+
 class OrganizationCreate(BaseModel):
     name: str
 
@@ -20,10 +40,25 @@ class OrganizationUpdate(BaseModel):
     name: str
 
 
+class OrganizationBusinessHoursUpdate(BaseModel):
+    business_timezone: str = "America/Bogota"
+    business_days: list[int] = [1, 2, 3, 4, 5]
+    business_start_time: str = "08:00"
+    business_end_time: str = "18:00"
+    business_day_hours: dict = {}
+    holiday_country: str = "CO"
+
+
 class OrganizationResponse(BaseModel):
     id: int
     name: str
     role: str
+    business_timezone: str = "America/Bogota"
+    business_days: list[int] = [1, 2, 3, 4, 5]
+    business_start_time: str = "08:00"
+    business_end_time: str = "18:00"
+    business_day_hours: dict = {}
+    holiday_country: str = "CO"
     created_at: str
 
 
@@ -36,13 +71,39 @@ class LinkGoogleAccountRequest(BaseModel):
     refresh_token: str | None = None
 
 
+class CreateAccountAccessRequest(BaseModel):
+    display_name: str
+    purpose: str | None = None
+    user_email: EmailStr
+    password: str
+
+
 class UpdateGoogleConnectionRequest(BaseModel):
     display_name: str | None = None
     purpose: str | None = None
+    user_email: EmailStr | None = None
+    password: str | None = None
+
+
+class AccountFollowupConfigUpdate(BaseModel):
+    enabled: bool = False
+    response_time_minutes: int = 120
+    notify_whatsapp_on_overdue: bool = False
+    warn_before_minutes: int | None = None
+    escalation_minutes: int | None = None
 
 
 class WhatsAppSetupRequest(BaseModel):
     phone_number: str
+
+
+class WhatsAppNotificationPreferencesUpdate(BaseModel):
+    notifications_enabled: bool = True
+    notify_new_email: bool = True
+    notify_followup_overdue: bool = True
+    notify_followup_warning: bool = True
+    notify_followup_late: bool = True
+    notify_followup_responded: bool = True
 
 
 class WhatsAppSetupResponse(BaseModel):
@@ -63,6 +124,9 @@ class WhatsAppWebhookRequest(BaseModel):
 
 class GoogleConnectionResponse(BaseModel):
     id: int
+    assigned_user_id: int | None = None
+    assigned_user_email: EmailStr | None = None
+    assigned_user_name: str | None = None
     display_name: str | None = None
     purpose: str | None = None
     email: EmailStr
@@ -76,6 +140,17 @@ class GoogleConnectionResponse(BaseModel):
     whatsapp_contact_name: str | None = None
     whatsapp_last_message_id: str | None = None
     whatsapp_last_message_at: str | None = None
+    whatsapp_notifications_enabled: bool = True
+    whatsapp_notify_new_email: bool = True
+    whatsapp_notify_followup_overdue: bool = True
+    whatsapp_notify_followup_warning: bool = True
+    whatsapp_notify_followup_late: bool = True
+    whatsapp_notify_followup_responded: bool = True
+    followup_enabled: bool = False
+    followup_response_time_minutes: int = 120
+    followup_notify_whatsapp_on_overdue: bool = False
+    followup_warn_before_minutes: int | None = None
+    followup_escalation_minutes: int | None = None
     created_at: str
     updated_at: str
 
@@ -181,6 +256,59 @@ class AutomationRuleResponse(BaseModel):
 
 class RuleWhatsAppNotificationsUpdate(BaseModel):
     connection_ids: list[int] = []
+
+
+class RuleFollowupConfigUpdate(BaseModel):
+    enabled: bool = False
+    response_time_minutes: int = 120
+    notify_whatsapp_on_overdue: bool = False
+    warn_before_minutes: int | None = None
+    escalation_minutes: int | None = None
+
+
+class ManualFollowupCreate(BaseModel):
+    email_message_id: int
+    response_time_minutes: int = 120
+    notify_whatsapp_on_overdue: bool = False
+    warn_before_minutes: int | None = None
+    escalation_minutes: int | None = None
+
+
+class EmailFollowupResponse(BaseModel):
+    id: int
+    organization_id: int
+    google_connection_id: int
+    connection_email: str | None = None
+    automation_rule_id: int | None = None
+    automation_rule_name: str | None = None
+    email_message_id: int | None = None
+    gmail_thread_id: str
+    initial_message_id: str
+    subject: str | None = None
+    sender: str | None = None
+    received_at: str | None = None
+    status: str
+    response_due_at: str | None = None
+    first_response_at: str | None = None
+    response_time_minutes: int | None = None
+    message_count: int
+    last_message_at: str | None = None
+    last_message_from: str | None = None
+    notified_overdue_at: str | None = None
+    escalated_at: str | None = None
+    tracking_source: str = "rule"
+    tracking_started_at: str | None = None
+    warn_before_minutes: int | None = None
+    notify_whatsapp_on_overdue: bool = False
+    escalation_minutes: int | None = None
+    warned_at: str | None = None
+    escalation_notified_at: str | None = None
+    closed_at: str | None = None
+    closure_reason: str | None = None
+    business_minutes_elapsed: int | None = None
+    business_due_at: str | None = None
+    created_at: str
+    updated_at: str
 
 
 class SystemEventResponse(BaseModel):

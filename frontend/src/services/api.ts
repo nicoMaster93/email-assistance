@@ -4,19 +4,45 @@ export type User = {
   id: number;
   name: string;
   email: string;
+  platform_role?: string;
   organization_id?: number;
   role?: string;
+  assigned_connection_id?: number | null;
+};
+
+export type RootUser = {
+  id: number;
+  name: string;
+  email: string;
+  platform_role: string;
+  created_at: string | null;
 };
 
 export type Organization = {
   id: number;
   name: string;
   role: string;
+  business_timezone: string;
+  business_days: number[];
+  business_start_time: string;
+  business_end_time: string;
+  business_day_hours: Record<string, BusinessDayHours>;
+  holiday_country: string;
   created_at: string;
+};
+
+export type BusinessDayHours = {
+  enabled: boolean;
+  uses_default: boolean;
+  start_time: string | null;
+  end_time: string | null;
 };
 
 export type GoogleConnection = {
   id: number;
+  assigned_user_id: number | null;
+  assigned_user_email: string | null;
+  assigned_user_name: string | null;
   display_name: string | null;
   purpose: string | null;
   email: string;
@@ -30,6 +56,17 @@ export type GoogleConnection = {
   whatsapp_contact_name: string | null;
   whatsapp_last_message_id: string | null;
   whatsapp_last_message_at: string | null;
+  whatsapp_notifications_enabled: boolean;
+  whatsapp_notify_new_email: boolean;
+  whatsapp_notify_followup_overdue: boolean;
+  whatsapp_notify_followup_warning: boolean;
+  whatsapp_notify_followup_late: boolean;
+  whatsapp_notify_followup_responded: boolean;
+  followup_enabled: boolean;
+  followup_response_time_minutes: number;
+  followup_notify_whatsapp_on_overdue: boolean;
+  followup_warn_before_minutes: number | null;
+  followup_escalation_minutes: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -109,6 +146,43 @@ export type AutomationRule = {
   updated_at: string;
 };
 
+export type EmailFollowup = {
+  id: number;
+  organization_id: number;
+  google_connection_id: number;
+  connection_email: string | null;
+  automation_rule_id: number | null;
+  automation_rule_name: string | null;
+  email_message_id: number | null;
+  gmail_thread_id: string;
+  initial_message_id: string;
+  subject: string | null;
+  sender: string | null;
+  received_at: string | null;
+  status: string;
+  response_due_at: string | null;
+  first_response_at: string | null;
+  response_time_minutes: number | null;
+  message_count: number;
+  last_message_at: string | null;
+  last_message_from: string | null;
+  notified_overdue_at: string | null;
+  escalated_at: string | null;
+  tracking_source: string;
+  tracking_started_at: string | null;
+  warn_before_minutes: number | null;
+  notify_whatsapp_on_overdue: boolean;
+  escalation_minutes: number | null;
+  warned_at: string | null;
+  escalation_notified_at: string | null;
+  closed_at: string | null;
+  closure_reason: string | null;
+  business_minutes_elapsed: number | null;
+  business_due_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type SystemEvent = {
   id: number;
   organization_id: number | null;
@@ -171,6 +245,28 @@ export function login(email: string, password: string) {
   });
 }
 
+export function updateProfile(token: string, payload: { name?: string; email?: string; password?: string }) {
+  return request<User>("/auth/me", {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listRootUsers(token: string) {
+  return request<RootUser[]>("/auth/root-users", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function createRootUser(token: string, payload: { name: string; email: string; password: string }) {
+  return request<RootUser>("/auth/root-users", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listOrganizations(token: string) {
   return request<Organization[]>("/organizations", {
     headers: { Authorization: `Bearer ${token}` },
@@ -190,6 +286,25 @@ export function updateOrganization(token: string, id: number, name: string) {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ name }),
+  });
+}
+
+export function updateOrganizationBusinessHours(
+  token: string,
+  id: number,
+  payload: {
+    business_timezone: string;
+    business_days: number[];
+    business_start_time: string;
+    business_end_time: string;
+    business_day_hours: Record<string, BusinessDayHours>;
+    holiday_country: string;
+  },
+) {
+  return request<Organization>(`/organizations/${id}/business-hours`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
   });
 }
 
@@ -224,7 +339,22 @@ export function createConnection(token: string, email: string, displayName?: str
   });
 }
 
-export function updateConnection(token: string, id: number, payload: { display_name?: string; purpose?: string }) {
+export function createAccountAccess(
+  token: string,
+  payload: { display_name: string; purpose?: string; user_email: string; password: string },
+) {
+  return request<GoogleConnection>("/google-connections/access", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateConnection(
+  token: string,
+  id: number,
+  payload: { display_name?: string; purpose?: string; user_email?: string; password?: string },
+) {
   return request<GoogleConnection>(`/google-connections/${id}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
@@ -232,10 +362,29 @@ export function updateConnection(token: string, id: number, payload: { display_n
   });
 }
 
-export function startGoogleOAuth(token: string, payload: { display_name?: string; purpose?: string } = {}) {
+export function updateConnectionFollowup(
+  token: string,
+  id: number,
+  payload: {
+    enabled: boolean;
+    response_time_minutes: number;
+    notify_whatsapp_on_overdue: boolean;
+    warn_before_minutes?: number | null;
+    escalation_minutes?: number | null;
+  },
+) {
+  return request<GoogleConnection>(`/google-connections/${id}/followup`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function startGoogleOAuth(token: string, payload: { display_name?: string; purpose?: string; connection_id?: number } = {}) {
   const params = new URLSearchParams();
   if (payload.display_name) params.set("display_name", payload.display_name);
   if (payload.purpose) params.set("purpose", payload.purpose);
+  if (payload.connection_id) params.set("connection_id", String(payload.connection_id));
   const query = params.toString() ? `?${params.toString()}` : "";
 
   return request<{ authorization_url: string }>(`/google/oauth/start${query}`, {
@@ -270,6 +419,25 @@ export function startWhatsAppSetup(token: string, id: number, phoneNumber: strin
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ phone_number: phoneNumber }),
+  });
+}
+
+export function updateWhatsAppPreferences(
+  token: string,
+  id: number,
+  payload: {
+    notifications_enabled: boolean;
+    notify_new_email: boolean;
+    notify_followup_overdue: boolean;
+    notify_followup_warning: boolean;
+    notify_followup_late: boolean;
+    notify_followup_responded: boolean;
+  },
+) {
+  return request<{ status: string; google_connection_id: number }>(`/whatsapp/connections/${id}/preferences`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
   });
 }
 
@@ -325,6 +493,68 @@ export function updateRuleWhatsAppNotifications(token: string, id: number, conne
   });
 }
 
+export function updateRuleFollowup(
+  token: string,
+  id: number,
+  payload: {
+    enabled: boolean;
+    response_time_minutes: number;
+    notify_whatsapp_on_overdue: boolean;
+    warn_before_minutes?: number | null;
+    escalation_minutes?: number | null;
+  },
+) {
+  return request<AutomationRule>(`/automation/rules/${id}/followup`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listFollowups(token: string, connectionId?: number | null, status?: string) {
+  const params = new URLSearchParams();
+  if (connectionId) params.set("connection_id", String(connectionId));
+  if (status && status !== "all") params.set("status", status);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return request<EmailFollowup[]>(`/followups${query}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function createManualFollowup(
+  token: string,
+  payload: {
+    email_message_id: number;
+    response_time_minutes: number;
+    notify_whatsapp_on_overdue: boolean;
+    warn_before_minutes?: number | null;
+    escalation_minutes?: number | null;
+  },
+) {
+  return request<EmailFollowup>("/followups", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getFollowupSummary(token: string) {
+  return request<{ totals: Record<string, number>; avg_response_minutes: number | null }>("/followups/summary", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function evaluateFollowups(token: string, connectionId?: number | null) {
+  const query = connectionId ? `?connection_id=${connectionId}` : "";
+  return request<{ status: string; evaluated: number; responded: number; overdue: number; errors: number }>(
+    `/followups/evaluate${query}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export function draftRuleFromText(token: string, payload: { text: string; connection_ids: number[] }) {
   return request<{
     name: string;
@@ -352,8 +582,23 @@ export function deleteRule(token: string, id: number) {
   });
 }
 
-export function listEvents(token: string) {
-  return request<SystemEvent[]>("/automation/events", {
+export type EventFilters = {
+  connection_id?: number;
+  event_type?: string;
+  date_from?: string;
+  date_to?: string;
+  limit?: number;
+};
+
+export function listEvents(token: string, filters: EventFilters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      params.set(key, String(value));
+    }
+  });
+  const query = params.toString();
+  return request<SystemEvent[]>(`/automation/events${query ? `?${query}` : ""}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 }

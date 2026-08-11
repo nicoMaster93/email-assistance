@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.config import ATTACHMENTS_DIR
 from app.db import db_session, insert_and_get_id, sql
-from app.dependencies import CurrentUser
+from app.dependencies import CurrentUser, require_connection_access
 from app.schemas import AttachmentResponse
 
 router = APIRouter(prefix="/attachments", tags=["attachments"])
@@ -30,6 +30,7 @@ def _connection_belongs_to_org(conn, connection_id: int, organization_id: int) -
 
 @router.post("/{connection_id}", response_model=AttachmentResponse, status_code=status.HTTP_201_CREATED)
 def upload_attachment(connection_id: int, file: UploadFile = File(...), user: dict = CurrentUser) -> AttachmentResponse:
+    require_connection_access(user, connection_id)
     with db_session() as conn:
         if not _connection_belongs_to_org(conn, connection_id, user["organization_id"]):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Conexion no encontrada")
@@ -72,16 +73,21 @@ def upload_attachment(connection_id: int, file: UploadFile = File(...), user: di
 @router.get("", response_model=list[AttachmentResponse])
 def list_attachments(user: dict = CurrentUser) -> list[AttachmentResponse]:
     with db_session() as conn:
+        filters = ["gc.organization_id = ?"]
+        params: list[object] = [user["organization_id"]]
+        if user.get("role") != "owner":
+            filters.append("gc.assigned_user_id = ?")
+            params.append(user["id"])
         rows = conn.execute(
             sql(
-            """
+            f"""
             SELECT a.*
             FROM email_attachments a
             JOIN google_connections gc ON gc.id = a.google_connection_id
-            WHERE gc.organization_id = ?
+            WHERE {" AND ".join(filters)}
             ORDER BY a.created_at DESC
             """,
             ),
-            (user["organization_id"],),
+            tuple(params),
         ).fetchall()
     return [_serialize_attachment(row) for row in rows]
