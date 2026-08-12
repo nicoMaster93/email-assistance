@@ -25,8 +25,17 @@ Incluye:
 ```text
 backend/      API FastAPI, auth, conexiones y adjuntos
 frontend/     React + TS con login y gestion basica de cuentas
+docs/         Manuales de usuario y operacion
 .agents/      Contexto para futuros agentes de desarrollo
 proyect.md    Documento original de producto/arquitectura
+```
+
+## Manual de usuario
+
+Consulta la guia funcional de la aplicacion en:
+
+```text
+docs/manual-usuario.md
 ```
 
 ## URLs locales
