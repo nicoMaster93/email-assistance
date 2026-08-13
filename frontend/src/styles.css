@@ -132,10 +132,51 @@ button:focus-visible {
 
 .auth-panel {
   display: grid;
-  gap: 28px;
+  gap: 26px;
   max-width: 460px;
   padding: 32px;
   width: 100%;
+}
+
+.auth-brand {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+}
+
+.auth-logo {
+  flex: 0 0 auto;
+  display: block;
+  height: auto;
+  object-fit: contain;
+  object-position: left center;
+  width: 92px;
+}
+
+.auth-brand h1 {
+  margin-top: 0;
+}
+
+.auth-brand .muted {
+  margin-top: 6px;
+}
+
+.brand-title {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+}
+
+.portal-icon {
+  background: #e8f3ef;
+  border: 1px solid #d5e6e0;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(24, 34, 31, 0.08);
+  height: 48px;
+  object-fit: contain;
+  padding: 7px;
+  width: 48px;
 }
 
 .organization-shell {

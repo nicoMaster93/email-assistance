@@ -5,7 +5,7 @@ from typing import Any, Iterator
 import psycopg
 from psycopg.rows import dict_row
 
-from app.config import ATTACHMENTS_DIR, DATABASE_URL, DATA_DIR, DATABASE_PATH, DEMO_USER, SUPER_ROOT_USER
+from app.config import ATTACHMENTS_DIR, DATABASE_URL, DATA_DIR, DATABASE_PATH, DEMO_USER, SEED_DEMO_USER
 from app.security import hash_password
 
 
@@ -51,8 +51,8 @@ def init_db() -> None:
         from app.migrations.runner import run_migrations
 
         run_migrations(conn)
-        seed_demo_user(conn)
-        seed_super_root_user(conn)
+        if SEED_DEMO_USER:
+            seed_demo_user(conn)
 
 
 def insert_and_get_id(conn: Any, statement: str, values: tuple) -> int:
@@ -65,6 +65,9 @@ def insert_and_get_id(conn: Any, statement: str, values: tuple) -> int:
 
 
 def seed_demo_user(conn: Any) -> None:
+    if not DEMO_USER["email"] or not DEMO_USER["password"]:
+        return
+
     user = conn.execute(sql("SELECT id FROM users WHERE email = ?"), (DEMO_USER["email"],)).fetchone()
     if user:
         conn.execute(sql("UPDATE users SET platform_role = 'root' WHERE id = ?"), (user["id"],))
@@ -84,20 +87,6 @@ def seed_demo_user(conn: Any) -> None:
         sql("INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, 'owner')"),
         (organization_id, user_id),
     )
-
-
-def seed_super_root_user(conn: Any) -> None:
-    user = conn.execute(sql("SELECT id FROM users WHERE email = ?"), (SUPER_ROOT_USER["email"],)).fetchone()
-    if user:
-        conn.execute(sql("UPDATE users SET platform_role = 'super_root' WHERE id = ?"), (user["id"],))
-        return
-
-    insert_and_get_id(
-        conn,
-        "INSERT INTO users (name, email, password_hash, platform_role) VALUES (?, ?, ?, 'super_root')",
-        (SUPER_ROOT_USER["name"], SUPER_ROOT_USER["email"], hash_password(SUPER_ROOT_USER["password"])),
-    )
-
 
 def ensure_schema_columns(conn: Any) -> None:
     if using_postgres():

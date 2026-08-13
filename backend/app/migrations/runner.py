@@ -23,6 +23,7 @@ MIGRATIONS = [
     Migration("0007_country_holidays_cache", "app.migrations.v0007_country_holidays_cache"),
     Migration("0008_account_users", "app.migrations.v0008_account_users"),
     Migration("0009_platform_roles", "app.migrations.v0009_platform_roles"),
+    Migration("0010_seed_super_root_user", "app.migrations.v0010_seed_super_root_user"),
 ]
 
 

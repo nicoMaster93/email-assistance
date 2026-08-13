@@ -4,7 +4,7 @@ Backend V1 en FastAPI basado en `proyect.md`.
 
 Incluye:
 
-- Usuario demo.
+- Autenticacion con roles de plataforma.
 - Login con token Bearer.
 - Organizacion demo.
 - Vinculacion simulada de varias cuentas Google por organizacion.
@@ -34,17 +34,12 @@ Archivo: `backend/.env`
 APP_SECRET=change-this-dev-secret-before-production
 FRONTEND_ORIGIN=http://localhost:5173
 DATABASE_URL=postgresql://email_assistance:email_assistance@localhost:5432/email_assistance
-DEMO_USER_EMAIL=demo@example.com
-DEMO_USER_PASSWORD=Demo123!
-DEMO_ORGANIZATION_NAME=Organizacion Demo
-SUPER_ROOT_EMAIL=master@emailasistance.com
-SUPER_ROOT_PASSWORD=123
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://127.0.0.1:8000/google/oauth/callback
 GOOGLE_PUBSUB_TOPIC=
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5-mini
+OPENAI_MODEL=gpt-5.4-mini
 WHATSAPP_NUMBER_ASSISTANT=
 WHATSAPP_SEND_TEXT_URL=
 WHATSAPP_SEND_TEXT_TOKEN=
@@ -220,7 +215,7 @@ El runner se registra en:
 backend/app/migrations/runner.py
 ```
 
-Al iniciar, `init_db()` ejecuta las migraciones pendientes y luego siembra el usuario demo.
+Al iniciar, `init_db()` ejecuta las migraciones pendientes. El usuario super root inicial se crea o promueve en la base de datos desde la migracion `0010_seed_super_root_user`.
 
 Para validar con SQLite:
 
@@ -251,29 +246,13 @@ access_type=offline
 prompt=consent
 ```
 
-## Usuario de prueba
-
-```text
-email: demo@example.com
-password: Demo123!
-```
-
 ## Usuario super root
 
 El usuario super root administra usuarios root. No trabaja dentro de una organizacion.
 
-```text
-email: master@emailasistance.com
-password: 123
-```
+El acceso inicial se conserva por compatibilidad con instalaciones existentes. Debe cambiarse desde el perfil despues del primer ingreso.
 
 Cada usuario root puede crear sus propias organizaciones, cuentas, reglas y configuraciones. Un root no ve organizaciones ni datos creados por otros roots.
-
-Tambien puedes consultar:
-
-```text
-GET /demo-user
-```
 
 ## Flujo rapido
 
@@ -282,7 +261,7 @@ Login:
 ```bash
 curl -X POST http://127.0.0.1:8000/auth/login ^
   -H "Content-Type: application/json" ^
-  -d "{\"email\":\"demo@example.com\",\"password\":\"Demo123!\"}"
+  -d "{\"email\":\"admin@tu-dominio.com\",\"password\":\"cambia-esta-clave\"}"
 ```
 
 Vincular una cuenta:

@@ -6,7 +6,7 @@ Incluye:
 
 - Backend FastAPI.
 - Frontend React + TypeScript.
-- Usuario demo.
+- Autenticacion con roles de plataforma.
 - Vinculacion simulada de varias cuentas de correo.
 - Inicio/callback OAuth real de Google.
 - Sincronizacion manual de correos recientes desde Gmail.
@@ -45,12 +45,7 @@ Frontend: http://127.0.0.1:5173
 Backend:  http://127.0.0.1:8000/docs
 ```
 
-Usuario demo:
-
-```text
-email: demo@example.com
-password: Demo123!
-```
+El usuario inicial de plataforma se crea en la base de datos mediante migraciones. Despues del primer ingreso, cambia su clave desde el perfil.
 
 ## Levantar todo con Docker
 

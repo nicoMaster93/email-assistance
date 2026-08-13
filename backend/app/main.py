@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import DEMO_USER, FRONTEND_ORIGIN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, WHATSAPP_NUMBER_ASSISTANT
+from app.config import FRONTEND_ORIGIN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, WHATSAPP_NUMBER_ASSISTANT
 from app.db import init_db
 from app.routers import attachments, auth, automation, followups, gmail, google_connections, google_oauth, organizations, whatsapp
 
@@ -28,15 +28,6 @@ def startup() -> None:
 @app.get("/health", tags=["system"])
 def health() -> dict:
     return {"status": "ok"}
-
-
-@app.get("/demo-user", tags=["system"])
-def demo_user() -> dict:
-    return {
-        "email": DEMO_USER["email"],
-        "password": DEMO_USER["password"],
-        "note": "Usuario sembrado automaticamente para pruebas locales.",
-    }
 
 
 @app.get("/google/config-status", tags=["system"])

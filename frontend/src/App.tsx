@@ -72,9 +72,6 @@ import {
   watchConnection,
 } from "./services/api";
 
-const DEMO_EMAIL = "demo@example.com";
-const DEMO_PASSWORD = "Demo123!";
-
 type AttachmentFilter = "all" | "with" | "without";
 type MainTab = "accounts" | "rules";
 type WorkTab = "emails" | "rules" | "attachments" | "events" | "followups";
@@ -135,6 +132,19 @@ function ToggleRow({
       <input checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} type="checkbox" />
       <i aria-hidden="true" />
     </label>
+  );
+}
+
+function BrandTitle({ subtitle, title }: { subtitle: string; title: string }) {
+  return (
+    <div className="brand-title">
+      <img className="portal-icon" src="/email-assistance-icon-192.png" alt="" aria-hidden="true" />
+      <div>
+        <p className="eyebrow">Email Assistance</p>
+        <h1>{title}</h1>
+        <p className="muted">{subtitle}</p>
+      </div>
+    </div>
   );
 }
 
@@ -389,8 +399,8 @@ function watchDateForDuration(duration: WatchDuration, customValue: string) {
 }
 
 export function App() {
-  const [email, setEmail] = useState(DEMO_EMAIL);
-  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [token, setToken] = useState(() => localStorage.getItem("access_token") ?? "");
   const [user, setUser] = useState<User | null>(() => {
@@ -1727,10 +1737,12 @@ export function App() {
     return (
       <main className="auth-shell">
         <section className="auth-panel">
-          <div>
-            <p className="eyebrow">Email Assistance</p>
-            <h1>Acceso de prueba</h1>
-            <p className="muted">Entra con el usuario demo y empieza vinculando cuentas de correo.</p>
+          <div className="auth-brand">
+            <img className="auth-logo" src="/logo-email-assitance.png" alt="Email Assistance" />
+            <div>
+              <h1>Iniciar sesion</h1>
+              <p className="muted">Accede a tu centro de procesamiento de correos.</p>
+            </div>
           </div>
 
           <form onSubmit={handleLogin} className="form">
@@ -1739,7 +1751,7 @@ export function App() {
               <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" />
             </label>
             <label>
-              Password
+              Contrasena
               <span className="password-field">
                 <input value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} />
                 <button
@@ -1809,11 +1821,10 @@ export function App() {
     return (
       <main className="app-shell organization-shell">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">Email Assistance</p>
-            <h1>Panel master</h1>
-            <p className="muted">Crea usuarios root. Cada root administra un espacio aislado con sus propias organizaciones.</p>
-          </div>
+          <BrandTitle
+            title="Panel master"
+            subtitle="Crea usuarios root. Cada root administra un espacio aislado con sus propias organizaciones."
+          />
           <div className="session">
             <span>{activeUser.email}</span>
             <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
@@ -1885,11 +1896,10 @@ export function App() {
     return (
       <main className="app-shell organization-shell">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">Email Assistance</p>
-            <h1>Selecciona una organizacion</h1>
-            <p className="muted">Las cuentas de correo, reglas y sincronizaciones se administran dentro de una organizacion.</p>
-          </div>
+          <BrandTitle
+            title="Selecciona una organizacion"
+            subtitle="Las cuentas de correo, reglas y sincronizaciones se administran dentro de una organizacion."
+          />
           <div className="session">
             <span>{activeUser.email}</span>
             <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
@@ -2008,11 +2018,7 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">Email Assistance</p>
-          <h1>Centro de procesamiento</h1>
-          <p className="muted">Organizacion activa: {selectedOrganization.name}</p>
-        </div>
+        <BrandTitle title="Centro de procesamiento" subtitle={`Organizacion activa: ${selectedOrganization.name}`} />
         <div className="session">
           {isOwner && (
             <>

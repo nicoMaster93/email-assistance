@@ -16,12 +16,7 @@ Puede:
 
 No trabaja dentro de una organizacion y no ve correos, reglas ni cuentas de los roots.
 
-Acceso inicial:
-
-```text
-master@emailasistance.com
-123
-```
+El acceso inicial se crea en la base de datos durante las migraciones. Por seguridad, debe cambiarse desde el perfil despues del primer ingreso.
 
 ### Root
 

@@ -14,6 +14,62 @@ def _token_placeholder(refresh_token: str | None) -> str | None:
     return encrypt_secret(refresh_token)
 
 
+def _resolve_account_user(conn, organization_id: int, display_name: str, user_email: str, password: str) -> int:
+    existing_user = conn.execute(
+        sql("SELECT id, platform_role FROM users WHERE email = ?"),
+        (user_email,),
+    ).fetchone()
+    if not existing_user:
+        account_user_id = insert_and_get_id(
+            conn,
+            "INSERT INTO users (name, email, password_hash, platform_role) VALUES (?, ?, ?, 'account_user')",
+            (display_name, user_email, hash_password(password)),
+        )
+        conn.execute(
+            sql("INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, 'account_user')"),
+            (organization_id, account_user_id),
+        )
+        return account_user_id
+
+    membership = conn.execute(
+        sql(
+            """
+            SELECT role
+            FROM organization_members
+            WHERE organization_id = ? AND user_id = ?
+            LIMIT 1
+            """
+        ),
+        (organization_id, existing_user["id"]),
+    ).fetchone()
+    if not membership:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Ese usuario existe en otra organizacion")
+
+    assigned_connection = conn.execute(
+        sql(
+            """
+            SELECT id
+            FROM google_connections
+            WHERE organization_id = ?
+              AND assigned_user_id = ?
+            LIMIT 1
+            """
+        ),
+        (organization_id, existing_user["id"]),
+    ).fetchone()
+    if assigned_connection:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Ese usuario ya esta asociado a otra cuenta")
+
+    if existing_user["platform_role"] != "account_user" or membership["role"] != "account_user":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Ese correo ya pertenece a un usuario administrador")
+
+    conn.execute(
+        sql("UPDATE users SET name = ? WHERE id = ?"),
+        (display_name, existing_user["id"]),
+    )
+    return existing_user["id"]
+
+
 def _serialize(row) -> GoogleConnectionResponse:
     return GoogleConnectionResponse(
         id=row["id"],
@@ -133,18 +189,12 @@ def create_account_access(payload: CreateAccountAccessRequest, user: dict = Curr
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "La contrasena debe tener al menos 6 caracteres")
 
     with db_session() as conn:
-        existing_user = conn.execute(sql("SELECT id FROM users WHERE email = ?"), (str(payload.user_email),)).fetchone()
-        if existing_user:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Ya existe un usuario con ese correo")
-
-        account_user_id = insert_and_get_id(
+        account_user_id = _resolve_account_user(
             conn,
-            "INSERT INTO users (name, email, password_hash, platform_role) VALUES (?, ?, ?, 'account_user')",
-            (display_name, str(payload.user_email), hash_password(payload.password)),
-        )
-        conn.execute(
-            sql("INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, 'account_user')"),
-            (user["organization_id"], account_user_id),
+            user["organization_id"],
+            display_name,
+            str(payload.user_email),
+            payload.password,
         )
         connection_id = insert_and_get_id(
             conn,
