@@ -139,7 +139,7 @@ button:focus-visible {
 .password-toggle {
   background: transparent;
   border-radius: 8px;
-  color: #52635e;
+  color: var(--color-muted);
   height: 34px;
   min-height: 34px;
   padding: 0;
@@ -152,8 +152,8 @@ button:focus-visible {
 
 .password-toggle:hover,
 .password-toggle:focus-visible {
-  background: #edf4f1;
-  color: #17624d;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
 }
 
 .auth-shell,
@@ -168,6 +168,13 @@ button:focus-visible {
   justify-content: center;
   margin: 0 auto;
   max-width: 1080px;
+  position: relative;
+}
+
+.auth-toolbar {
+  position: absolute;
+  right: 24px;
+  top: 24px;
 }
 
 .app-shell {
@@ -252,7 +259,12 @@ button:focus-visible {
 
 .public-logo-link {
   align-items: center;
+  background: #ffffff;
+  border: 1px solid #d7e1ed;
+  border-radius: 8px;
+  box-shadow: 0 14px 34px var(--color-shadow);
   display: inline-flex;
+  padding: 10px;
 }
 
 .public-logo-link img {
@@ -273,7 +285,7 @@ button:focus-visible {
 .secondary-link,
 .primary-link {
   border-radius: 8px;
-  color: #17624d;
+  color: var(--color-primary);
   font-weight: 800;
   min-height: 40px;
   padding: 10px 12px;
@@ -282,12 +294,13 @@ button:focus-visible {
 
 .public-login-link,
 .primary-link {
-  background: #17624d;
-  color: #fff !important;
+  background: var(--color-primary);
+  color: var(--color-primary-text) !important;
 }
 
 .secondary-link {
-  background: #eef4f1;
+  background: var(--color-subtle);
+  color: var(--color-subtle-text);
 }
 
 .public-hero {
@@ -310,7 +323,7 @@ button:focus-visible {
 .public-grid p,
 .public-hero li,
 .legal-page li {
-  color: #52635e;
+  color: var(--color-muted);
   font-size: 16px;
   line-height: 1.6;
 }
@@ -325,10 +338,10 @@ button:focus-visible {
 .public-hero-card,
 .public-grid article,
 .legal-page {
-  background: #fff;
-  border: 1px solid #dce4e1;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  box-shadow: 0 18px 50px rgba(26, 39, 35, 0.06);
+  box-shadow: 0 18px 50px var(--color-shadow);
 }
 
 .public-hero-card {
@@ -372,8 +385,8 @@ button:focus-visible {
 }
 
 .public-footer {
-  border-top: 1px solid #dce4e1;
-  color: #66746f;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
   display: flex;
   flex-wrap: wrap;
   gap: 10px;

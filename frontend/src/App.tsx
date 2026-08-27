@@ -96,6 +96,54 @@ const THEME_PALETTES: Array<{ value: ThemePalette; label: string }> = [
   { value: "slate", label: "Corporativo" },
 ];
 
+function ThemeSwitcher({
+  isOpen,
+  onChange,
+  onToggle,
+  value,
+}: {
+  isOpen: boolean;
+  onChange: (value: ThemePalette) => void;
+  onToggle: () => void;
+  value: ThemePalette;
+}) {
+  return (
+    <div className="theme-menu">
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        className="icon-button"
+        onClick={onToggle}
+        title="Cambiar paleta"
+        type="button"
+      >
+        <Palette size={18} />
+      </button>
+      {isOpen && (
+        <div className="theme-popover" role="menu" aria-label="Paletas de color">
+          <div>
+            <strong>Paleta</strong>
+            <span>{THEME_PALETTES.find((palette) => palette.value === value)?.label}</span>
+          </div>
+          {THEME_PALETTES.map((palette) => (
+            <button
+              className={value === palette.value ? "active" : ""}
+              key={palette.value}
+              onClick={() => onChange(palette.value)}
+              role="menuitem"
+              type="button"
+            >
+              <i aria-hidden="true" className={`theme-swatch ${palette.value}`} />
+              <span>{palette.label}</span>
+              {value === palette.value && <CheckCircle2 size={16} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const API_SOURCE_OPTIONS = [
   ["subject", "Asunto"],
   ["body_text", "Cuerpo del correo"],
@@ -232,7 +280,7 @@ function buildAppPath(organizationId: string, mainTab: MainTab, connectionId: st
   return `/app/organizaciones/${organizationId}/cuentas`;
 }
 
-function PublicHeader() {
+function PublicHeader({ themeSwitcher }: { themeSwitcher: ReactNode }) {
   return (
     <header className="public-header">
       <a className="public-logo-link" href="/" aria-label="Email Assistance">
@@ -242,16 +290,17 @@ function PublicHeader() {
         <a href="/privacy-policy">Privacidad</a>
         <a href="/terms-of-service">Terminos</a>
         <a href="/data-deletion">Eliminar datos</a>
+        {themeSwitcher}
         <a className="public-login-link" href="/login">Iniciar sesion</a>
       </nav>
     </header>
   );
 }
 
-function PublicLayout({ children }: { children: ReactNode }) {
+function PublicLayout({ children, themeSwitcher }: { children: ReactNode; themeSwitcher: ReactNode }) {
   return (
     <main className="public-shell">
-      <PublicHeader />
+      <PublicHeader themeSwitcher={themeSwitcher} />
       {children}
       <footer className="public-footer">
         <span>Email Assistance</span>
@@ -261,9 +310,9 @@ function PublicLayout({ children }: { children: ReactNode }) {
   );
 }
 
-function PublicHome() {
+function PublicHome({ themeSwitcher }: { themeSwitcher: ReactNode }) {
   return (
-    <PublicLayout>
+    <PublicLayout themeSwitcher={themeSwitcher}>
       <section className="public-hero">
         <div>
           <p className="eyebrow">Automatizacion de correo</p>
@@ -305,9 +354,9 @@ function PublicHome() {
   );
 }
 
-function PrivacyPolicyPage() {
+function PrivacyPolicyPage({ themeSwitcher }: { themeSwitcher: ReactNode }) {
   return (
-    <PublicLayout>
+    <PublicLayout themeSwitcher={themeSwitcher}>
       <article className="legal-page">
         <p className="eyebrow">Politica de privacidad</p>
         <h1>Politica de Privacidad de Email Assistance</h1>
@@ -344,9 +393,9 @@ function PrivacyPolicyPage() {
   );
 }
 
-function TermsPage() {
+function TermsPage({ themeSwitcher }: { themeSwitcher: ReactNode }) {
   return (
-    <PublicLayout>
+    <PublicLayout themeSwitcher={themeSwitcher}>
       <article className="legal-page">
         <p className="eyebrow">Terminos de servicio</p>
         <h1>Terminos de Servicio de Email Assistance</h1>
@@ -376,9 +425,9 @@ function TermsPage() {
   );
 }
 
-function DataDeletionPage() {
+function DataDeletionPage({ themeSwitcher }: { themeSwitcher: ReactNode }) {
   return (
-    <PublicLayout>
+    <PublicLayout themeSwitcher={themeSwitcher}>
       <article className="legal-page">
         <p className="eyebrow">Eliminacion de datos</p>
         <h1>Solicitud de eliminacion de datos</h1>
@@ -405,11 +454,11 @@ function DataDeletionPage() {
   );
 }
 
-function PublicPageView({ page }: { page: PublicPage }) {
-  if (page === "privacy") return <PrivacyPolicyPage />;
-  if (page === "terms") return <TermsPage />;
-  if (page === "data-deletion") return <DataDeletionPage />;
-  return <PublicHome />;
+function PublicPageView({ page, themeSwitcher }: { page: PublicPage; themeSwitcher: ReactNode }) {
+  if (page === "privacy") return <PrivacyPolicyPage themeSwitcher={themeSwitcher} />;
+  if (page === "terms") return <TermsPage themeSwitcher={themeSwitcher} />;
+  if (page === "data-deletion") return <DataDeletionPage themeSwitcher={themeSwitcher} />;
+  return <PublicHome themeSwitcher={themeSwitcher} />;
 }
 
 function formatDate(value: string | null) {
@@ -2317,13 +2366,26 @@ export function App() {
     }
   }
 
+  const themeSwitcher = (
+    <ThemeSwitcher
+      isOpen={isThemeMenuOpen}
+      onChange={(nextTheme) => {
+        setThemePalette(nextTheme);
+        setIsThemeMenuOpen(false);
+      }}
+      onToggle={() => setIsThemeMenuOpen((current) => !current)}
+      value={themePalette}
+    />
+  );
+
   if (!isLoggedIn && publicPage) {
-    return <PublicPageView page={publicPage} />;
+    return <PublicPageView page={publicPage} themeSwitcher={themeSwitcher} />;
   }
 
   if (!isLoggedIn) {
     return (
       <main className="auth-shell">
+        <div className="auth-toolbar">{themeSwitcher}</div>
         <section className="auth-panel">
           <div className="auth-brand">
             <img className="auth-logo" src="/logo-email-assitance-blue.png" alt="Email Assistance" />
@@ -2404,45 +2466,6 @@ export function App() {
       </section>
     </div>
   ) : null;
-
-  const themeSwitcher = (
-    <div className="theme-menu">
-      <button
-        aria-expanded={isThemeMenuOpen}
-        aria-haspopup="menu"
-        className="icon-button"
-        onClick={() => setIsThemeMenuOpen((current) => !current)}
-        title="Cambiar paleta"
-        type="button"
-      >
-        <Palette size={18} />
-      </button>
-      {isThemeMenuOpen && (
-        <div className="theme-popover" role="menu" aria-label="Paletas de color">
-          <div>
-            <strong>Paleta</strong>
-            <span>{THEME_PALETTES.find((palette) => palette.value === themePalette)?.label}</span>
-          </div>
-          {THEME_PALETTES.map((palette) => (
-            <button
-              className={themePalette === palette.value ? "active" : ""}
-              key={palette.value}
-              onClick={() => {
-                setThemePalette(palette.value);
-                setIsThemeMenuOpen(false);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <i aria-hidden="true" className={`theme-swatch ${palette.value}`} />
-              <span>{palette.label}</span>
-              {themePalette === palette.value && <CheckCircle2 size={16} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 
   if (isSuperRoot) {
     return (
