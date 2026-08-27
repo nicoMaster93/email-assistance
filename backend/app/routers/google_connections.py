@@ -1,9 +1,12 @@
 import json
+import shutil
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.config import ATTACHMENTS_DIR
 from app.db import db_session, insert_and_get_id, sql
 from app.dependencies import CurrentUser, require_owner
+from app.google_client import revoke_refresh_token
 from app.schemas import AccountFollowupConfigUpdate, CreateAccountAccessRequest, GoogleConnectionResponse, LinkGoogleAccountRequest, UpdateGoogleConnectionRequest
 from app.security import encrypt_secret, hash_password
 
@@ -12,6 +15,70 @@ router = APIRouter(prefix="/google-connections", tags=["google connections"])
 
 def _token_placeholder(refresh_token: str | None) -> str | None:
     return encrypt_secret(refresh_token)
+
+
+def _delete_connection_data(conn, organization_id: int, connection_id: int) -> dict:
+    connection = conn.execute(
+        sql(
+            """
+            SELECT id, email, encrypted_refresh_token
+            FROM google_connections
+            WHERE id = ? AND organization_id = ?
+            LIMIT 1
+            """
+        ),
+        (connection_id, organization_id),
+    ).fetchone()
+    if not connection:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conexion no encontrada")
+
+    attachment_rows = conn.execute(
+        sql("SELECT storage_path FROM email_attachments WHERE google_connection_id = ?"),
+        (connection_id,),
+    ).fetchall()
+    message_count = conn.execute(
+        sql("SELECT COUNT(*) AS total FROM email_messages WHERE google_connection_id = ?"),
+        (connection_id,),
+    ).fetchone()["total"]
+    attachment_count = len(attachment_rows)
+    revoked = revoke_refresh_token(connection["encrypted_refresh_token"])
+
+    conn.execute(
+        sql("UPDATE google_connections SET encrypted_refresh_token = NULL, access_token_expires_at = NULL WHERE id = ?"),
+        (connection_id,),
+    )
+    conn.execute(sql("DELETE FROM google_connections WHERE id = ? AND organization_id = ?"), (connection_id, organization_id))
+
+    removed_files = 0
+    for row in attachment_rows:
+        storage_path = row["storage_path"]
+        if not storage_path:
+            continue
+        attachment_path = (ATTACHMENTS_DIR / storage_path).resolve()
+        try:
+            attachment_path.relative_to(ATTACHMENTS_DIR.resolve())
+        except ValueError:
+            continue
+        if attachment_path.exists() and attachment_path.is_file():
+            attachment_path.unlink()
+            removed_files += 1
+
+    connection_folder = (ATTACHMENTS_DIR / str(organization_id) / str(connection_id)).resolve()
+    try:
+        connection_folder.relative_to(ATTACHMENTS_DIR.resolve())
+    except ValueError:
+        connection_folder = None
+    if connection_folder and connection_folder.exists():
+        shutil.rmtree(connection_folder)
+
+    return {
+        "google_connection_id": connection_id,
+        "email": connection["email"],
+        "messages_deleted": message_count,
+        "attachments_deleted": attachment_count,
+        "files_removed": removed_files,
+        "google_token_revoked": revoked,
+    }
 
 
 def _resolve_account_user(conn, organization_id: int, display_name: str, user_email: str, password: str) -> int:
@@ -368,16 +435,12 @@ def update_connection_followup(
 def unlink_connection(connection_id: int, user: dict = CurrentUser) -> None:
     require_owner(user)
     with db_session() as conn:
-        cursor = conn.execute(
-            sql(
-            """
-            DELETE FROM google_connections
-            WHERE id = ? AND organization_id = ?
-            """,
-            ),
-            (connection_id, user["organization_id"]),
-        )
-        deleted_count = cursor.rowcount
+        _delete_connection_data(conn, user["organization_id"], connection_id)
 
-    if deleted_count == 0:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conexion no encontrada")
+
+@router.delete("/{connection_id}/google-data")
+def delete_google_connection_data(connection_id: int, user: dict = CurrentUser) -> dict:
+    require_owner(user)
+    with db_session() as conn:
+        result = _delete_connection_data(conn, user["organization_id"], connection_id)
+    return {"status": "deleted", **result}

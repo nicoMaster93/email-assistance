@@ -243,6 +243,7 @@ class AutomationRuleResponse(BaseModel):
     google_connection_id: int | None
     connection_ids: list[int] = []
     whatsapp_enabled_connection_ids: list[int] = []
+    api_connection_count: int = 0
     name: str
     is_active: bool
     sender_contains: str | None
@@ -256,6 +257,58 @@ class AutomationRuleResponse(BaseModel):
 
 class RuleWhatsAppNotificationsUpdate(BaseModel):
     connection_ids: list[int] = []
+
+
+class RuleApiConnectionCreate(BaseModel):
+    name: str
+    method: str = "POST"
+    url: str
+    headers: list[dict] = []
+    query_params: list[dict] = []
+    body_fields: list[dict] = []
+    timeout_seconds: int = 15
+    is_active: bool = True
+
+
+class RuleApiConnectionUpdate(BaseModel):
+    name: str
+    method: str = "POST"
+    url: str
+    headers: list[dict] = []
+    query_params: list[dict] = []
+    body_fields: list[dict] = []
+    timeout_seconds: int = 15
+    is_active: bool = True
+
+
+class RuleApiConnectionTestRequest(RuleApiConnectionCreate):
+    pass
+
+
+class RuleApiConnectionTestResponse(BaseModel):
+    ok: bool
+    method: str
+    url: str
+    status_code: int | None = None
+    elapsed_ms: int
+    message: str
+    response_preview: str | None = None
+
+
+class RuleApiConnectionResponse(BaseModel):
+    id: int
+    organization_id: int
+    rule_id: int
+    name: str
+    method: str
+    url: str
+    headers: list[dict] = []
+    query_params: list[dict] = []
+    body_fields: list[dict] = []
+    timeout_seconds: int
+    is_active: bool
+    created_at: str
+    updated_at: str
 
 
 class RuleFollowupConfigUpdate(BaseModel):

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Bell,
@@ -15,6 +15,7 @@ import {
   MessageCircle,
   Eye,
   EyeOff,
+  Palette,
   Paperclip,
   Plus,
   RefreshCw,
@@ -27,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  ApiMapping,
   Attachment,
   AutomationRule,
   AUTH_EXPIRED_EVENT,
@@ -34,9 +36,11 @@ import {
   createOrganization,
   createManualFollowup,
   createRootUser,
+  createRuleApiConnection,
   createRule,
   deleteConnection,
   deleteOrganization,
+  deleteRuleApiConnection,
   deleteRule,
   EmailFollowup,
   EmailMessage,
@@ -49,22 +53,26 @@ import {
   listMessages,
   listConnections,
   listOrganizations,
+  listRuleApiConnections,
   listRootUsers,
   listRules,
   login,
   Organization,
+  RuleApiConnection,
   RootUser,
   startGoogleOAuth,
   startWhatsAppSetup,
   stopWatchConnection,
   syncConnection,
   SystemEvent,
+  testRuleApiConnection,
   updateConnection,
   updateConnectionFollowup,
   updateOrganization,
   updateOrganizationBusinessHours,
   updateProfile,
   updateRule,
+  updateRuleApiConnection,
   updateRuleFollowup,
   updateRuleWhatsAppNotifications,
   updateWhatsAppPreferences,
@@ -77,6 +85,33 @@ type MainTab = "accounts" | "rules";
 type WorkTab = "emails" | "rules" | "attachments" | "events" | "followups";
 type RuleMode = "ai" | "manual";
 type WatchDuration = "1w" | "1m" | "3m" | "1y" | "custom";
+type PublicPage = "home" | "privacy" | "terms" | "data-deletion";
+type MappingGroup = "headers" | "query_params" | "body_fields";
+type ThemePalette = "automated-mail" | "emerald" | "slate";
+
+const WORK_TABS: WorkTab[] = ["emails", "rules", "attachments", "events", "followups"];
+const THEME_PALETTES: Array<{ value: ThemePalette; label: string }> = [
+  { value: "automated-mail", label: "Oscuro" },
+  { value: "emerald", label: "Claro" },
+  { value: "slate", label: "Corporativo" },
+];
+
+const API_SOURCE_OPTIONS = [
+  ["subject", "Asunto"],
+  ["body_text", "Cuerpo del correo"],
+  ["snippet", "Resumen de Gmail"],
+  ["sender", "Remitente"],
+  ["recipients", "Destinatarios"],
+  ["received_at", "Fecha de recepcion"],
+  ["account_email", "Cuenta conectada"],
+  ["rule_name", "Regla aplicada"],
+  ["gmail_message_id", "Gmail Message ID"],
+  ["gmail_thread_id", "Gmail Thread ID"],
+  ["gmail_history_id", "Gmail History ID"],
+  ["has_attachments", "Tiene adjuntos"],
+  ["attachment_count", "Cantidad de adjuntos"],
+  ["attachments", "Lista de adjuntos"],
+] as const;
 
 const BUSINESS_DAY_OPTIONS = [
   [1, "Lun"],
@@ -146,6 +181,235 @@ function BrandTitle({ subtitle, title }: { subtitle: string; title: string }) {
       </div>
     </div>
   );
+}
+
+function currentPublicPage(pathname: string): PublicPage | null {
+  if (pathname === "/" || pathname === "") return "home";
+  if (pathname === "/privacy-policy") return "privacy";
+  if (pathname === "/terms-of-service") return "terms";
+  if (pathname === "/data-deletion") return "data-deletion";
+  return null;
+}
+
+function parseAppRoute(pathname = window.location.pathname) {
+  const segments = pathname.split("/").filter(Boolean);
+  const result: {
+    organizationId: string;
+    connectionId: string;
+    mainTab: MainTab;
+    panel: WorkTab;
+  } = {
+    organizationId: "",
+    connectionId: "all",
+    mainTab: "accounts",
+    panel: "emails",
+  };
+
+  if (segments[0] !== "app") return result;
+  if (segments[1] === "organizaciones" && segments[2]) {
+    result.organizationId = segments[2];
+  }
+  if (segments[3] === "reglas") {
+    result.mainTab = "rules";
+    return result;
+  }
+  if (segments[3] === "cuentas") {
+    result.mainTab = "accounts";
+    if (segments[4]) {
+      result.connectionId = segments[4];
+    }
+    if (segments[5] && WORK_TABS.includes(segments[5] as WorkTab)) {
+      result.panel = segments[5] as WorkTab;
+    }
+  }
+  return result;
+}
+
+function buildAppPath(organizationId: string, mainTab: MainTab, connectionId: string, panel: WorkTab) {
+  if (!organizationId) return "/app/organizaciones";
+  if (mainTab === "rules") return `/app/organizaciones/${organizationId}/reglas`;
+  if (connectionId && connectionId !== "all") return `/app/organizaciones/${organizationId}/cuentas/${connectionId}/${panel}`;
+  return `/app/organizaciones/${organizationId}/cuentas`;
+}
+
+function PublicHeader() {
+  return (
+    <header className="public-header">
+      <a className="public-logo-link" href="/" aria-label="Email Assistance">
+        <img src="/logo-email-assitance.png" alt="Email Assistance" />
+      </a>
+      <nav className="public-nav" aria-label="Legal">
+        <a href="/privacy-policy">Privacidad</a>
+        <a href="/terms-of-service">Terminos</a>
+        <a href="/data-deletion">Eliminar datos</a>
+        <a className="public-login-link" href="/login">Iniciar sesion</a>
+      </nav>
+    </header>
+  );
+}
+
+function PublicLayout({ children }: { children: ReactNode }) {
+  return (
+    <main className="public-shell">
+      <PublicHeader />
+      {children}
+      <footer className="public-footer">
+        <span>Email Assistance</span>
+        <span>Uso responsable de datos de Gmail para monitoreo operativo.</span>
+      </footer>
+    </main>
+  );
+}
+
+function PublicHome() {
+  return (
+    <PublicLayout>
+      <section className="public-hero">
+        <div>
+          <p className="eyebrow">Automatizacion de correo</p>
+          <h1>Email Assistance</h1>
+          <p>
+            Plataforma para conectar cuentas Gmail, sincronizar solo correos relevantes mediante reglas de negocio,
+            gestionar adjuntos, enviar avisos por WhatsApp y dar seguimiento a respuestas importantes.
+          </p>
+          <div className="public-actions">
+            <a className="primary-link" href="/login">Acceder al portal</a>
+            <a className="secondary-link" href="/privacy-policy">Ver politica de privacidad</a>
+          </div>
+        </div>
+        <div className="public-hero-card">
+          <strong>Funciones principales</strong>
+          <ul>
+            <li>Conexion segura con Google OAuth.</li>
+            <li>Reglas configurables por cuenta y organizacion.</li>
+            <li>Sincronizacion filtrada de correos y adjuntos.</li>
+            <li>Alertas y seguimiento operativo por WhatsApp.</li>
+          </ul>
+        </div>
+      </section>
+      <section className="public-grid">
+        <article>
+          <h2>Datos minimos y visibles</h2>
+          <p>La aplicacion usa datos de Gmail solo para funciones visibles al usuario: bandeja filtrada, reglas, adjuntos, eventos y seguimientos.</p>
+        </article>
+        <article>
+          <h2>Control del usuario</h2>
+          <p>El usuario puede desconectar una cuenta Gmail y solicitar la eliminacion completa de datos almacenados en la plataforma.</p>
+        </article>
+        <article>
+          <h2>Seguridad</h2>
+          <p>Los tokens se almacenan cifrados y las conexiones productivas deben operar sobre HTTPS con dominios verificados.</p>
+        </article>
+      </section>
+    </PublicLayout>
+  );
+}
+
+function PrivacyPolicyPage() {
+  return (
+    <PublicLayout>
+      <article className="legal-page">
+        <p className="eyebrow">Politica de privacidad</p>
+        <h1>Politica de Privacidad de Email Assistance</h1>
+        <p>
+          Email Assistance accede a informacion de Gmail solo cuando un usuario autoriza la conexion mediante Google OAuth.
+          La finalidad es sincronizar correos que cumplan reglas configuradas por el usuario u organizacion, mostrar contexto operativo,
+          gestionar adjuntos, generar eventos, enviar notificaciones configuradas y dar seguimiento a respuestas.
+        </p>
+        <h2>Datos de Google que podemos almacenar</h2>
+        <p>
+          Podemos almacenar correo conectado, identificadores de mensajes e hilos, remitente, destinatarios, asunto, fecha de recepcion,
+          fragmento, cuerpo del mensaje, metadatos necesarios para auditoria, nombre de la regla coincidente y adjuntos descargados.
+          Los tokens de Google se almacenan cifrados y se usan solo para mantener la sincronizacion autorizada.
+        </p>
+        <h2>Uso limitado</h2>
+        <p>
+          El uso de la informacion recibida de las APIs de Google se adherira a la Politica de Datos del Usuario de los Servicios de API
+          de Google, incluidos los requisitos de Uso Limitado. No vendemos datos de Gmail, no los usamos para publicidad, no los transferimos
+          a data brokers y no los usamos para entrenar modelos generales o fundacionales.
+        </p>
+        <h2>Retencion</h2>
+        <p>
+          Los datos se conservan mientras la cuenta permanezca conectada y sean necesarios para bandeja, reglas, adjuntos, eventos,
+          notificaciones o seguimientos. Al desconectar una cuenta o solicitar eliminacion, se eliminan tokens, correos sincronizados,
+          adjuntos locales y datos operativos asociados.
+        </p>
+        <h2>Eliminacion</h2>
+        <p>
+          Los usuarios pueden eliminar datos desde el portal al desconectar la cuenta Gmail. Tambien pueden solicitar eliminacion completa
+          siguiendo el proceso descrito en la pagina de eliminacion de datos.
+        </p>
+      </article>
+    </PublicLayout>
+  );
+}
+
+function TermsPage() {
+  return (
+    <PublicLayout>
+      <article className="legal-page">
+        <p className="eyebrow">Terminos de servicio</p>
+        <h1>Terminos de Servicio de Email Assistance</h1>
+        <p>
+          Email Assistance es una herramienta para administracion operativa de correos conectados por usuarios autorizados. El usuario
+          es responsable de contar con permisos para conectar cuentas Gmail, crear reglas, habilitar notificaciones y gestionar datos
+          dentro de su organizacion.
+        </p>
+        <h2>Uso permitido</h2>
+        <p>
+          La aplicacion debe usarse para productividad, monitoreo operativo, gestion de adjuntos, seguimiento de respuestas y notificaciones
+          relacionadas con correos autorizados. No debe usarse para vigilancia no autorizada, publicidad, venta de datos o acceso a cuentas
+          sin consentimiento.
+        </p>
+        <h2>Responsabilidades</h2>
+        <p>
+          El proveedor mantiene controles tecnicos razonables para proteger la plataforma. El cliente debe administrar usuarios, reglas,
+          horarios, cuentas conectadas y permisos internos de forma responsable.
+        </p>
+        <h2>Disponibilidad y cambios</h2>
+        <p>
+          El servicio puede actualizarse para mejorar seguridad, compatibilidad con Google APIs, cumplimiento normativo y estabilidad.
+          El uso continuo implica aceptacion de las condiciones vigentes.
+        </p>
+      </article>
+    </PublicLayout>
+  );
+}
+
+function DataDeletionPage() {
+  return (
+    <PublicLayout>
+      <article className="legal-page">
+        <p className="eyebrow">Eliminacion de datos</p>
+        <h1>Solicitud de eliminacion de datos</h1>
+        <p>
+          Los usuarios pueden eliminar datos de Gmail almacenados en Email Assistance desde el portal, desconectando la cuenta Gmail.
+          Este proceso borra tokens de Google, correos sincronizados, adjuntos almacenados, seguimientos, eventos y configuraciones asociadas
+          a esa cuenta.
+        </p>
+        <h2>Proceso desde el portal</h2>
+        <ol>
+          <li>Inicia sesion en Email Assistance.</li>
+          <li>Selecciona la organizacion y la cuenta Gmail conectada.</li>
+          <li>Usa la accion de eliminar o desconectar cuenta.</li>
+          <li>Confirma la eliminacion completa de datos asociados a esa cuenta.</li>
+        </ol>
+        <h2>Solicitud asistida</h2>
+        <p>
+          Si no puedes acceder al portal, contacta al administrador de tu organizacion o al equipo responsable del despliegue indicando
+          el correo Gmail conectado y la organizacion a la que pertenece. La eliminacion debe ejecutarse sin demoras indebidas una vez
+          validada la identidad y autorizacion del solicitante.
+        </p>
+      </article>
+    </PublicLayout>
+  );
+}
+
+function PublicPageView({ page }: { page: PublicPage }) {
+  if (page === "privacy") return <PrivacyPolicyPage />;
+  if (page === "terms") return <TermsPage />;
+  if (page === "data-deletion") return <DataDeletionPage />;
+  return <PublicHome />;
 }
 
 function formatDate(value: string | null) {
@@ -399,6 +663,7 @@ function watchDateForDuration(duration: WatchDuration, customValue: string) {
 }
 
 export function App() {
+  const initialRoute = useMemo(() => parseAppRoute(), []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -411,7 +676,7 @@ export function App() {
   const [rootUsers, setRootUsers] = useState<RootUser[]>([]);
   const [organizationsLoaded, setOrganizationsLoaded] = useState(false);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState(
-    () => localStorage.getItem("selected_organization_id") ?? "",
+    () => initialRoute.organizationId || localStorage.getItem("selected_organization_id") || "",
   );
   const [isOrganizationModalOpen, setIsOrganizationModalOpen] = useState(false);
   const [editingOrganization, setEditingOrganization] = useState<Organization | null>(null);
@@ -440,6 +705,20 @@ export function App() {
   const [ruleWhatsAppTarget, setRuleWhatsAppTarget] = useState<AutomationRule | null>(null);
   const [ruleWhatsAppConnectionIds, setRuleWhatsAppConnectionIds] = useState<number[]>([]);
   const [ruleWhatsAppMessage, setRuleWhatsAppMessage] = useState("");
+  const [ruleApiTarget, setRuleApiTarget] = useState<AutomationRule | null>(null);
+  const [ruleApiConnections, setRuleApiConnections] = useState<RuleApiConnection[]>([]);
+  const [editingRuleApi, setEditingRuleApi] = useState<RuleApiConnection | null>(null);
+  const [ruleApiName, setRuleApiName] = useState("");
+  const [ruleApiMethod, setRuleApiMethod] = useState("POST");
+  const [ruleApiUrl, setRuleApiUrl] = useState("");
+  const [ruleApiActive, setRuleApiActive] = useState(true);
+  const [ruleApiTimeout, setRuleApiTimeout] = useState("15");
+  const [ruleApiHeaders, setRuleApiHeaders] = useState<ApiMapping[]>([]);
+  const [ruleApiQueryParams, setRuleApiQueryParams] = useState<ApiMapping[]>([]);
+  const [ruleApiBodyFields, setRuleApiBodyFields] = useState<ApiMapping[]>([]);
+  const [ruleApiMessage, setRuleApiMessage] = useState("");
+  const [ruleApiMessageTone, setRuleApiMessageTone] = useState<"info" | "success" | "error">("info");
+  const [ruleApiTesting, setRuleApiTesting] = useState(false);
   const [ruleFollowupTarget, setRuleFollowupTarget] = useState<AutomationRule | null>(null);
   const [ruleFollowupEnabled, setRuleFollowupEnabled] = useState(false);
   const [ruleFollowupHours, setRuleFollowupHours] = useState("2");
@@ -468,8 +747,8 @@ export function App() {
   const [rules, setRules] = useState<AutomationRule[]>([]);
   const [followups, setFollowups] = useState<EmailFollowup[]>([]);
   const [events, setEvents] = useState<SystemEvent[]>([]);
-  const [activeMainTab, setActiveMainTab] = useState<MainTab>("accounts");
-  const [activePanel, setActivePanel] = useState<WorkTab>("emails");
+  const [activeMainTab, setActiveMainTab] = useState<MainTab>(initialRoute.mainTab);
+  const [activePanel, setActivePanel] = useState<WorkTab>(initialRoute.panel);
   const [ruleMode, setRuleMode] = useState<RuleMode>("ai");
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<GoogleConnection | null>(null);
@@ -502,7 +781,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
-  const [selectedConnectionId, setSelectedConnectionId] = useState("all");
+  const [selectedConnectionId, setSelectedConnectionId] = useState(initialRoute.connectionId);
   const [statusFilter, setStatusFilter] = useState("all");
   const [followupStatusFilter, setFollowupStatusFilter] = useState("all");
   const [eventTypeFilter, setEventTypeFilter] = useState("business");
@@ -511,6 +790,11 @@ export function App() {
   const [eventLimit, setEventLimit] = useState("100");
   const [attachmentFilter, setAttachmentFilter] = useState<AttachmentFilter>("all");
   const [showFilters, setShowFilters] = useState(false);
+  const [themePalette, setThemePalette] = useState<ThemePalette>(
+    () => (localStorage.getItem("theme_palette") as ThemePalette | null) || "automated-mail",
+  );
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+  const publicPage = currentPublicPage(window.location.pathname);
 
   const isLoggedIn = useMemo(() => Boolean(token && user), [token, user]);
   const selectedOrganization =
@@ -539,6 +823,24 @@ export function App() {
   }, [token]);
 
   useEffect(() => {
+    document.documentElement.dataset.theme = themePalette;
+    localStorage.setItem("theme_palette", themePalette);
+  }, [themePalette]);
+
+  useEffect(() => {
+    function handlePopState() {
+      const route = parseAppRoute();
+      setSelectedOrganizationId(route.organizationId);
+      setSelectedConnectionId(route.connectionId);
+      setActiveMainTab(route.mainTab);
+      setActivePanel(route.panel);
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
     if (!token || !selectedOrganizationId) return;
     const params = new URLSearchParams(window.location.search);
     const googleConnected = params.get("google_connected");
@@ -553,6 +855,14 @@ export function App() {
     }
     refreshConnections(token);
   }, [token, selectedOrganizationId]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isSuperRoot) return;
+    const nextPath = buildAppPath(selectedOrganizationId, activeMainTab, selectedConnectionId, activePanel);
+    if (window.location.pathname !== nextPath) {
+      window.history.replaceState({}, "", nextPath);
+    }
+  }, [activeMainTab, activePanel, isLoggedIn, isSuperRoot, selectedConnectionId, selectedOrganizationId]);
 
   useEffect(() => {
     if (!selectedOrganizationId) return;
@@ -570,6 +880,14 @@ export function App() {
       setActivePanel("emails");
     }
   }, [activePanel, isOwner]);
+
+  useEffect(() => {
+    if (!connections.length || selectedConnectionId === "all") return;
+    if (!connections.some((connection) => String(connection.id) === selectedConnectionId)) {
+      setSelectedConnectionId("all");
+      setActivePanel("emails");
+    }
+  }, [connections, selectedConnectionId]);
 
   async function refreshConnections(activeToken = token) {
     try {
@@ -637,7 +955,8 @@ export function App() {
       }
       const items = await listOrganizations(activeToken);
       setOrganizations(items);
-      const storedOrganizationId = localStorage.getItem("selected_organization_id");
+      const routeOrganizationId = parseAppRoute().organizationId;
+      const storedOrganizationId = routeOrganizationId || localStorage.getItem("selected_organization_id");
       const storedStillExists = items.some((organization) => String(organization.id) === storedOrganizationId);
       if (items.length === 1 && items[0].role === "account_user") {
         setSelectedOrganizationId(String(items[0].id));
@@ -987,10 +1306,12 @@ export function App() {
       localStorage.setItem("access_token", response.access_token);
       localStorage.setItem("user", JSON.stringify(response.user));
       if (response.user.role === "super_root" || response.user.platform_role === "super_root") {
+        window.history.replaceState(null, "", "/master");
         setRootUsers(await listRootUsers(response.access_token));
         setOrganizations([]);
         setOrganizationsLoaded(true);
       } else {
+        window.history.replaceState(null, "", "/app/organizaciones");
         await refreshOrganizations(response.access_token);
       }
     } catch (error) {
@@ -1200,11 +1521,18 @@ export function App() {
   }
 
   async function handleDeleteConnection(id: number) {
+    const connection = connections.find((item) => item.id === id);
+    const confirmed = window.confirm(
+      `Vas a desconectar ${connection?.email ?? "esta cuenta"} y eliminar sus datos sincronizados: tokens de Google, correos, adjuntos, eventos y seguimientos asociados. Esta accion no se puede deshacer.`
+    );
+    if (!confirmed) return;
+
     setLoading(true);
     setMessage("");
 
     try {
       await deleteConnection(token, id);
+      setMessage("Cuenta desconectada y datos de Gmail eliminados.");
       if (selectedConnectionId === String(id)) {
         setSelectedConnectionId("all");
       }
@@ -1493,6 +1821,7 @@ export function App() {
 
   function handleLogout() {
     clearSession();
+    window.history.replaceState(null, "", "/login");
   }
 
   function selectConnection(id: string) {
@@ -1580,6 +1909,261 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function emptyMapping(target = ""): ApiMapping {
+    return { target, source_type: "field", source_key: "subject", literal: "" };
+  }
+
+  function resetRuleApiForm() {
+    setEditingRuleApi(null);
+    setRuleApiName("Nueva integracion");
+    setRuleApiMethod("POST");
+    setRuleApiUrl("");
+    setRuleApiActive(true);
+    setRuleApiTimeout("15");
+    setRuleApiHeaders([]);
+    setRuleApiQueryParams([]);
+    setRuleApiBodyFields([emptyMapping("subject")]);
+    setRuleApiMessage("");
+    setRuleApiMessageTone("info");
+  }
+
+  async function openRuleApiModal(rule: AutomationRule) {
+    setRuleApiTarget(rule);
+    setRuleApiMessage("");
+    resetRuleApiForm();
+    try {
+      const apiConnections = await listRuleApiConnections(token, rule.id);
+      setRuleApiConnections(apiConnections);
+      if (apiConnections[0]) {
+        selectRuleApi(apiConnections[0]);
+      }
+    } catch (error) {
+      setRuleApiMessage(error instanceof Error ? error.message : "No se pudieron cargar las APIs");
+      setRuleApiMessageTone("error");
+    }
+  }
+
+  function closeRuleApiModal() {
+    setRuleApiTarget(null);
+    setRuleApiConnections([]);
+    resetRuleApiForm();
+  }
+
+  function selectRuleApi(apiConnection: RuleApiConnection) {
+    setEditingRuleApi(apiConnection);
+    setRuleApiName(apiConnection.name);
+    setRuleApiMethod(apiConnection.method);
+    setRuleApiUrl(apiConnection.url);
+    setRuleApiActive(apiConnection.is_active);
+    setRuleApiTimeout(String(apiConnection.timeout_seconds || 15));
+    setRuleApiHeaders(apiConnection.headers || []);
+    setRuleApiQueryParams(apiConnection.query_params || []);
+    setRuleApiBodyFields(apiConnection.body_fields || []);
+    setRuleApiMessage("");
+    setRuleApiMessageTone("info");
+  }
+
+  function apiMappingState(group: MappingGroup) {
+    if (group === "headers") return [ruleApiHeaders, setRuleApiHeaders] as const;
+    if (group === "query_params") return [ruleApiQueryParams, setRuleApiQueryParams] as const;
+    return [ruleApiBodyFields, setRuleApiBodyFields] as const;
+  }
+
+  function addApiMapping(group: MappingGroup) {
+    const [items, setItems] = apiMappingState(group);
+    setItems([...items, emptyMapping()]);
+  }
+
+  function updateApiMapping(group: MappingGroup, index: number, patch: Partial<ApiMapping>) {
+    const [items, setItems] = apiMappingState(group);
+    setItems(items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+  }
+
+  function removeApiMapping(group: MappingGroup, index: number) {
+    const [items, setItems] = apiMappingState(group);
+    setItems(items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function validateRuleApiForm() {
+    const timeout = Number(ruleApiTimeout);
+    if (!ruleApiName.trim()) {
+      setRuleApiMessage("Escribe un nombre para identificar la API.");
+      setRuleApiMessageTone("error");
+      return null;
+    }
+    if (!ruleApiUrl.trim()) {
+      setRuleApiMessage("Configura la URL de la API.");
+      setRuleApiMessageTone("error");
+      return null;
+    }
+    if (!Number.isFinite(timeout) || timeout < 1 || timeout > 60) {
+      setRuleApiMessage("El timeout debe estar entre 1 y 60 segundos.");
+      setRuleApiMessageTone("error");
+      return null;
+    }
+
+    return {
+      name: ruleApiName,
+      method: ruleApiMethod,
+      url: ruleApiUrl,
+      headers: ruleApiHeaders,
+      query_params: ruleApiQueryParams,
+      body_fields: ruleApiBodyFields,
+      timeout_seconds: timeout,
+      is_active: ruleApiActive,
+    };
+  }
+
+  async function runRuleApiTest(payload: ReturnType<typeof validateRuleApiForm>, options: { beforeSave?: boolean } = {}) {
+    if (!ruleApiTarget || !payload) return false;
+    setRuleApiTesting(true);
+    setRuleApiMessage(options.beforeSave ? "Probando API antes de guardar..." : "Probando API...");
+    setRuleApiMessageTone("info");
+    try {
+      const result = await testRuleApiConnection(token, ruleApiTarget.id, payload);
+      const statusText = result.status_code ? ` Estado ${result.status_code}.` : "";
+      const previewText = result.response_preview ? ` Respuesta: ${result.response_preview}` : "";
+      setRuleApiMessage(`${result.message}${statusText} Tiempo: ${result.elapsed_ms} ms.${previewText}`);
+      setRuleApiMessageTone(result.ok ? "success" : "error");
+      return result.ok;
+    } catch (error) {
+      setRuleApiMessage(error instanceof Error ? error.message : "No se pudo probar la API");
+      setRuleApiMessageTone("error");
+      return false;
+    } finally {
+      setRuleApiTesting(false);
+    }
+  }
+
+  async function handleTestRuleApi() {
+    const payload = validateRuleApiForm();
+    await runRuleApiTest(payload);
+  }
+
+  async function handleSaveRuleApi(event: FormEvent) {
+    event.preventDefault();
+    if (!ruleApiTarget) return;
+    const payload = validateRuleApiForm();
+    if (!payload) return;
+
+    setLoading(true);
+    try {
+      const testPassed = await runRuleApiTest(payload, { beforeSave: true });
+      if (!testPassed) return;
+      if (editingRuleApi) {
+        await updateRuleApiConnection(token, editingRuleApi.id, payload);
+      } else {
+        await createRuleApiConnection(token, ruleApiTarget.id, payload);
+      }
+      const apiConnections = await listRuleApiConnections(token, ruleApiTarget.id);
+      setRuleApiConnections(apiConnections);
+      await refreshConnections();
+      setRuleApiMessage("API probada y guardada.");
+      setRuleApiMessageTone("success");
+    } catch (error) {
+      setRuleApiMessage(error instanceof Error ? error.message : "No se pudo guardar la API");
+      setRuleApiMessageTone("error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDeleteRuleApi() {
+    if (!ruleApiTarget || !editingRuleApi) return;
+    const confirmed = window.confirm(`Eliminar la API "${editingRuleApi.name}" de esta regla?`);
+    if (!confirmed) return;
+    setLoading(true);
+    setRuleApiMessage("");
+    try {
+      await deleteRuleApiConnection(token, editingRuleApi.id);
+      const apiConnections = await listRuleApiConnections(token, ruleApiTarget.id);
+      setRuleApiConnections(apiConnections);
+      resetRuleApiForm();
+      await refreshConnections();
+      setRuleApiMessage("API eliminada.");
+      setRuleApiMessageTone("success");
+    } catch (error) {
+      setRuleApiMessage(error instanceof Error ? error.message : "No se pudo eliminar la API");
+      setRuleApiMessageTone("error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderApiMappings(title: string, group: MappingGroup, description: string) {
+    const [items] = apiMappingState(group);
+    return (
+      <div className="api-mapping-section">
+        <div className="mapping-section-header">
+          <div>
+            <strong>{title}</strong>
+            <span>{description}</span>
+          </div>
+          <button className="secondary-button" onClick={() => addApiMapping(group)} type="button">
+            <Plus size={16} />
+            Campo
+          </button>
+        </div>
+        <div className="mapping-list">
+          {items.map((item, index) => (
+            <div className="mapping-row" key={`${group}-${index}`}>
+              <label>
+                Campo API
+                <input
+                  value={item.target}
+                  onChange={(event) => updateApiMapping(group, index, { target: event.target.value })}
+                  placeholder="customer.email"
+                />
+              </label>
+              <label>
+                Fuente
+                <select
+                  value={item.source_type}
+                  onChange={(event) =>
+                    updateApiMapping(group, index, {
+                      source_type: event.target.value as ApiMapping["source_type"],
+                    })
+                  }
+                >
+                  <option value="field">Dato del correo</option>
+                  <option value="literal">Valor escrito</option>
+                </select>
+              </label>
+              {item.source_type === "literal" ? (
+                <label>
+                  Valor
+                  <input
+                    value={item.literal || ""}
+                    onChange={(event) => updateApiMapping(group, index, { literal: event.target.value })}
+                    placeholder="Valor fijo"
+                  />
+                </label>
+              ) : (
+                <label>
+                  Dato disponible
+                  <select
+                    value={item.source_key || "subject"}
+                    onChange={(event) => updateApiMapping(group, index, { source_key: event.target.value })}
+                  >
+                    {API_SOURCE_OPTIONS.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button className="icon-button danger" onClick={() => removeApiMapping(group, index)} title="Quitar campo" type="button">
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+          {items.length === 0 && <div className="empty compact-empty">Sin campos configurados.</div>}
+        </div>
+      </div>
+    );
   }
 
   function openRuleFollowupModal(rule: AutomationRule) {
@@ -1733,6 +2317,10 @@ export function App() {
     }
   }
 
+  if (!isLoggedIn && publicPage) {
+    return <PublicPageView page={publicPage} />;
+  }
+
   if (!isLoggedIn) {
     return (
       <main className="auth-shell">
@@ -1817,6 +2405,45 @@ export function App() {
     </div>
   ) : null;
 
+  const themeSwitcher = (
+    <div className="theme-menu">
+      <button
+        aria-expanded={isThemeMenuOpen}
+        aria-haspopup="menu"
+        className="icon-button"
+        onClick={() => setIsThemeMenuOpen((current) => !current)}
+        title="Cambiar paleta"
+        type="button"
+      >
+        <Palette size={18} />
+      </button>
+      {isThemeMenuOpen && (
+        <div className="theme-popover" role="menu" aria-label="Paletas de color">
+          <div>
+            <strong>Paleta</strong>
+            <span>{THEME_PALETTES.find((palette) => palette.value === themePalette)?.label}</span>
+          </div>
+          {THEME_PALETTES.map((palette) => (
+            <button
+              className={themePalette === palette.value ? "active" : ""}
+              key={palette.value}
+              onClick={() => {
+                setThemePalette(palette.value);
+                setIsThemeMenuOpen(false);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <i aria-hidden="true" className={`theme-swatch ${palette.value}`} />
+              <span>{palette.label}</span>
+              {themePalette === palette.value && <CheckCircle2 size={16} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   if (isSuperRoot) {
     return (
       <main className="app-shell organization-shell">
@@ -1830,6 +2457,7 @@ export function App() {
             <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
               <UserRound size={18} />
             </button>
+            {themeSwitcher}
             <button className="icon-button" onClick={handleLogout} title="Cerrar sesion">
               <LogOut size={18} />
             </button>
@@ -1905,6 +2533,7 @@ export function App() {
             <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
               <UserRound size={18} />
             </button>
+            {themeSwitcher}
             <button className="icon-button" onClick={handleLogout} title="Cerrar sesion">
               <LogOut size={18} />
             </button>
@@ -2036,6 +2665,7 @@ export function App() {
           <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
             <UserRound size={18} />
           </button>
+          {themeSwitcher}
           <button className="icon-button" onClick={handleLogout} title="Cerrar sesion">
             <LogOut size={18} />
           </button>
@@ -2144,6 +2774,14 @@ export function App() {
                       type="button"
                     >
                       <MessageCircle size={16} />
+                    </button>
+                    <button
+                      className={`icon-button ${rule.api_connection_count > 0 ? "solid" : ""}`}
+                      onClick={() => openRuleApiModal(rule)}
+                      title="Conectar APIs"
+                      type="button"
+                    >
+                      <Link2 size={16} />
                     </button>
                     <button
                       className={`icon-button ${followupConfig(rule).enabled ? "solid" : ""}`}
@@ -2618,6 +3256,14 @@ export function App() {
                             type="button"
                           >
                             <MessageCircle size={16} />
+                          </button>
+                          <button
+                            className={`icon-button ${rule.api_connection_count > 0 ? "solid" : ""}`}
+                            onClick={() => openRuleApiModal(rule)}
+                            title="Conectar APIs"
+                            type="button"
+                          >
+                            <Link2 size={16} />
                           </button>
                           <button
                             className={`icon-button ${followupConfig(rule).enabled ? "solid" : ""}`}
@@ -3132,6 +3778,97 @@ export function App() {
                 Guardar notificaciones
               </button>
             </form>
+          </section>
+        </div>
+      )}
+
+      {ruleApiTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal wide-modal api-modal" role="dialog" aria-modal="true" aria-labelledby="rule-api-modal-title">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">APIs conectadas</p>
+                <h2 id="rule-api-modal-title">Conectar APIs a {ruleApiTarget.name}</h2>
+              </div>
+              <button className="icon-button" onClick={closeRuleApiModal} title="Cerrar" type="button">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="muted">
+              Cuando un correo coincida con esta regla, se ejecutaran las APIs activas con los datos mapeados del correo y valores personalizados.
+            </p>
+            {ruleApiMessage && <p className={`message modal-message ${ruleApiMessageTone}`}>{ruleApiMessage}</p>}
+            <div className="api-config-layout">
+              <aside className="api-connection-list">
+                <button className={!editingRuleApi ? "active" : ""} onClick={resetRuleApiForm} type="button">
+                  <Plus size={16} />
+                  Nueva API
+                </button>
+                {ruleApiConnections.map((apiConnection) => (
+                  <button
+                    className={editingRuleApi?.id === apiConnection.id ? "active" : ""}
+                    key={apiConnection.id}
+                    onClick={() => selectRuleApi(apiConnection)}
+                    type="button"
+                  >
+                    <span>
+                      <strong>{apiConnection.name}</strong>
+                      <small>{apiConnection.method} - {apiConnection.is_active ? "Activa" : "Inactiva"}</small>
+                    </span>
+                  </button>
+                ))}
+                {ruleApiConnections.length === 0 && <div className="empty compact-empty">Sin APIs configuradas.</div>}
+              </aside>
+              <form className="modal-form api-config-form" onSubmit={handleSaveRuleApi}>
+                <div className="api-basic-grid">
+                  <label>
+                    Nombre
+                    <input value={ruleApiName} onChange={(event) => setRuleApiName(event.target.value)} placeholder="Crear ticket en CRM" />
+                  </label>
+                  <label>
+                    Metodo
+                    <select value={ruleApiMethod} onChange={(event) => setRuleApiMethod(event.target.value)}>
+                      <option value="POST">POST</option>
+                      <option value="PUT">PUT</option>
+                      <option value="PATCH">PATCH</option>
+                      <option value="GET">GET</option>
+                      <option value="DELETE">DELETE</option>
+                    </select>
+                  </label>
+                  <label className="api-url-field">
+                    URL
+                    <input value={ruleApiUrl} onChange={(event) => setRuleApiUrl(event.target.value)} placeholder="https://api.empresa.com/webhook" />
+                  </label>
+                  <label>
+                    Timeout
+                    <input value={ruleApiTimeout} onChange={(event) => setRuleApiTimeout(event.target.value)} min="1" max="60" type="number" />
+                  </label>
+                  <label className="checkbox-label api-active-toggle">
+                    <input checked={ruleApiActive} onChange={(event) => setRuleApiActive(event.target.checked)} type="checkbox" />
+                    API activa
+                  </label>
+                </div>
+                {renderApiMappings("Headers", "headers", "Campos enviados como headers HTTP.")}
+                {renderApiMappings("Query params", "query_params", "Campos enviados en la URL como parametros.")}
+                {renderApiMappings("Body JSON", "body_fields", "Campos enviados en el cuerpo JSON.")}
+                <div className="modal-actions-row">
+                  {editingRuleApi && (
+                    <button className="secondary-button danger-text" disabled={loading} onClick={handleDeleteRuleApi} type="button">
+                      <Trash2 size={17} />
+                      Eliminar API
+                    </button>
+                  )}
+                  <button className="secondary-button" disabled={loading || ruleApiTesting} onClick={handleTestRuleApi} type="button">
+                    <RefreshCw size={17} />
+                    {ruleApiTesting ? "Probando..." : "Probar API"}
+                  </button>
+                  <button disabled={loading || ruleApiTesting} type="submit">
+                    <Link2 size={18} />
+                    {editingRuleApi ? "Guardar API" : "Crear API"}
+                  </button>
+                </div>
+              </form>
+            </div>
           </section>
         </div>
       )}

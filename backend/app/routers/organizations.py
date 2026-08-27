@@ -1,8 +1,10 @@
 import json
+import shutil
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.config import ATTACHMENTS_DIR
 from app.db import db_session, insert_and_get_id, sql
 from app.dependencies import AuthenticatedUser
 from app.holidays import HolidaySyncError, ensure_country_holidays, normalize_country_code
@@ -213,3 +215,11 @@ def delete_organization(organization_id: int, user: dict = AuthenticatedUser) ->
             raise HTTPException(status.HTTP_403_FORBIDDEN, "No tienes permisos para eliminar esta organizacion")
 
         conn.execute(sql("DELETE FROM organizations WHERE id = ?"), (organization_id,))
+
+    organization_folder = (ATTACHMENTS_DIR / str(organization_id)).resolve()
+    try:
+        organization_folder.relative_to(ATTACHMENTS_DIR.resolve())
+    except ValueError:
+        return
+    if organization_folder.exists():
+        shutil.rmtree(organization_folder)

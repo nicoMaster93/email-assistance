@@ -68,6 +68,21 @@ No puede:
 
 Si el token expira, la aplicacion redirige automaticamente al login.
 
+## Navegacion y apariencia
+
+La navegacion principal queda reflejada en la URL. Si recargas la pagina, la aplicacion conserva la organizacion, cuenta y pestana seleccionada.
+
+Ejemplos:
+
+```text
+/app/organizaciones/1/cuentas
+/app/organizaciones/1/cuentas/14/reglas
+/app/organizaciones/1/cuentas/14/eventos
+/app/organizaciones/1/reglas
+```
+
+Desde el selector de paleta en la barra superior puedes cambiar rapidamente los colores de la aplicacion. La paleta por defecto es `Correos Automatizados`.
+
 ## Panel master
 
 Disponible solo para el super root.
@@ -158,6 +173,7 @@ Root puede:
 - Eliminarlas.
 - Configurar WhatsApp por regla.
 - Configurar seguimiento por regla.
+- Conectar APIs por regla.
 
 Usuario de cuenta puede:
 
@@ -165,6 +181,31 @@ Usuario de cuenta puede:
 - Revisar reglas asociadas a su cuenta.
 
 No ve acciones de edicion.
+
+## APIs conectadas por regla
+
+Disponible para root.
+
+Una regla puede ejecutar una o varias APIs cuando un correo cumple sus condiciones. Esto aplica tanto para correos sincronizados manualmente como para correos procesados por Pub/Sub.
+
+Para conectar una API:
+
+1. En la regla, presiona el icono de conexion API.
+2. Presiona `Nueva API`.
+3. Ingresa nombre, metodo HTTP, URL y timeout.
+4. Define si la API queda activa.
+5. Configura headers, query params o body JSON.
+6. Relaciona cada campo del API con un dato disponible del correo o con un valor escrito manualmente.
+7. Presiona `Probar API`.
+8. Si la prueba es exitosa, presiona `Crear API` o `Guardar API`.
+
+Antes de guardar, la aplicacion prueba automaticamente la API. Si el endpoint no responde, responde con error, no existe o no acepta el metodo configurado, la API no se guarda.
+
+La prueba hace una llamada real al endpoint usando datos de muestra del correo e incluye el header `X-Email-Assistance-Test: true`. El endpoint externo puede usar ese header para identificar pruebas y evitar procesarlas como eventos reales.
+
+`API activa` permite encender o apagar una integracion sin eliminarla. Solo las APIs activas se ejecutan cuando entra un correo que cumple la regla.
+
+`Timeout` es el tiempo maximo, en segundos, que el backend espera respuesta de la API. Si se supera ese tiempo, la llamada se registra como fallida.
 
 ## Crear reglas
 

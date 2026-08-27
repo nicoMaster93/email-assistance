@@ -1,14 +1,22 @@
 import json
+import time
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.db import db_session, insert_and_get_id, sql, using_postgres
 from app.dependencies import CurrentUser, require_owner
 from app.openai_client import draft_rule_from_text
+from app.rule_api_dispatcher import _build_payload
 from app.schemas import (
     AutomationRuleCreate,
     AutomationRuleResponse,
     AutomationRuleUpdate,
+    RuleApiConnectionCreate,
+    RuleApiConnectionResponse,
+    RuleApiConnectionTestRequest,
+    RuleApiConnectionTestResponse,
+    RuleApiConnectionUpdate,
     RuleDraftFromTextRequest,
     RuleDraftResponse,
     RuleFollowupConfigUpdate,
@@ -33,6 +41,8 @@ BUSINESS_EVENT_TYPES = (
     "followup_evaluation_failed",
     "gmail_pubsub_unmatched",
     "gmail_pubsub_ignored_no_rules",
+    "rule_api_call_sent",
+    "rule_api_call_failed",
 )
 
 
@@ -59,6 +69,7 @@ def _serialize_rule(row) -> AutomationRuleResponse:
         google_connection_id=row["google_connection_id"],
         connection_ids=connection_ids,
         whatsapp_enabled_connection_ids=whatsapp_enabled_connection_ids,
+        api_connection_count=int(row["api_connection_count"]) if "api_connection_count" in row.keys() and row["api_connection_count"] is not None else 0,
         name=row["name"],
         is_active=bool(row["is_active"]),
         sender_contains=row["sender_contains"],
@@ -84,6 +95,54 @@ def _serialize_event(row) -> SystemEventResponse:
     )
 
 
+def _serialize_rule_api(row) -> RuleApiConnectionResponse:
+    return RuleApiConnectionResponse(
+        id=row["id"],
+        organization_id=row["organization_id"],
+        rule_id=row["rule_id"],
+        name=row["name"],
+        method=row["method"],
+        url=row["url"],
+        headers=json.loads(row["headers"] or "[]"),
+        query_params=json.loads(row["query_params"] or "[]"),
+        body_fields=json.loads(row["body_fields"] or "[]"),
+        timeout_seconds=row["timeout_seconds"],
+        is_active=bool(row["is_active"]),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _validate_rule_api_payload(payload: RuleApiConnectionCreate | RuleApiConnectionUpdate) -> None:
+    if not payload.name.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El nombre de la API es obligatorio")
+    if payload.method.upper() not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Metodo HTTP no soportado")
+    if not payload.url.startswith(("https://", "http://")):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "La URL debe iniciar con http:// o https://")
+    if payload.timeout_seconds < 1 or payload.timeout_seconds > 60:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El timeout debe estar entre 1 y 60 segundos")
+
+
+def _sample_rule_api_source(rule_name: str) -> dict:
+    return {
+        "subject": "Correo de prueba de Email Assistance",
+        "body_text": "Este es un mensaje de prueba para validar la configuracion de una API conectada a una regla.",
+        "snippet": "Mensaje de prueba para validar API conectada",
+        "sender": "remitente@example.com",
+        "recipients": "cuenta@example.com",
+        "received_at": "2026-08-27T10:00:00-05:00",
+        "account_email": "cuenta@example.com",
+        "rule_name": rule_name,
+        "gmail_message_id": "gmail-message-test",
+        "gmail_thread_id": "gmail-thread-test",
+        "gmail_history_id": "gmail-history-test",
+        "has_attachments": False,
+        "attachment_count": 0,
+        "attachments": [],
+    }
+
+
 def _rules_query() -> str:
     aggregate = "STRING_AGG(rc.google_connection_id::text, ',')" if using_postgres() else "GROUP_CONCAT(rc.google_connection_id)"
     whatsapp_aggregate = (
@@ -92,9 +151,17 @@ def _rules_query() -> str:
         else "GROUP_CONCAT(CASE WHEN rc.whatsapp_notifications_enabled THEN rc.google_connection_id END)"
     )
     return f"""
-        SELECT ar.*, {aggregate} AS connection_ids, {whatsapp_aggregate} AS whatsapp_enabled_connection_ids
+        SELECT ar.*,
+               {aggregate} AS connection_ids,
+               {whatsapp_aggregate} AS whatsapp_enabled_connection_ids,
+               MAX(COALESCE(api_counts.total, 0)) AS api_connection_count
         FROM automation_rules ar
         LEFT JOIN rule_connections rc ON rc.rule_id = ar.id
+        LEFT JOIN (
+            SELECT rule_id, COUNT(*) AS total
+            FROM rule_api_connections
+            GROUP BY rule_id
+        ) api_counts ON api_counts.rule_id = ar.id
         WHERE ar.organization_id = ?
         GROUP BY ar.id
         ORDER BY ar.created_at DESC
@@ -109,9 +176,17 @@ def _rule_query_by_id() -> str:
         else "GROUP_CONCAT(CASE WHEN rc.whatsapp_notifications_enabled THEN rc.google_connection_id END)"
     )
     return f"""
-        SELECT ar.*, {aggregate} AS connection_ids, {whatsapp_aggregate} AS whatsapp_enabled_connection_ids
+        SELECT ar.*,
+               {aggregate} AS connection_ids,
+               {whatsapp_aggregate} AS whatsapp_enabled_connection_ids,
+               MAX(COALESCE(api_counts.total, 0)) AS api_connection_count
         FROM automation_rules ar
         LEFT JOIN rule_connections rc ON rc.rule_id = ar.id
+        LEFT JOIN (
+            SELECT rule_id, COUNT(*) AS total
+            FROM rule_api_connections
+            GROUP BY rule_id
+        ) api_counts ON api_counts.rule_id = ar.id
         WHERE ar.id = ?
         GROUP BY ar.id
     """
@@ -131,7 +206,12 @@ def list_rules(user: dict = CurrentUser) -> list[AutomationRuleResponse]:
                     """
                     SELECT ar.*,
                            rc.google_connection_id AS connection_ids,
-                           CASE WHEN rc.whatsapp_notifications_enabled THEN rc.google_connection_id ELSE NULL END AS whatsapp_enabled_connection_ids
+                           CASE WHEN rc.whatsapp_notifications_enabled THEN rc.google_connection_id ELSE NULL END AS whatsapp_enabled_connection_ids,
+                           (
+                               SELECT COUNT(*)
+                               FROM rule_api_connections rac
+                               WHERE rac.rule_id = ar.id
+                           ) AS api_connection_count
                     FROM automation_rules ar
                     JOIN rule_connections rc ON rc.rule_id = ar.id
                     WHERE ar.organization_id = ?
@@ -391,6 +471,212 @@ def update_rule_followup_config(
         row = conn.execute(sql(_rule_query_by_id()), (rule_id,)).fetchone()
 
     return _serialize_rule(row)
+
+
+@router.get("/rules/{rule_id}/api-connections", response_model=list[RuleApiConnectionResponse])
+def list_rule_api_connections(rule_id: int, user: dict = CurrentUser) -> list[RuleApiConnectionResponse]:
+    require_owner(user)
+    with db_session() as conn:
+        rule = conn.execute(
+            sql("SELECT id FROM automation_rules WHERE id = ? AND organization_id = ?"),
+            (rule_id, user["organization_id"]),
+        ).fetchone()
+        if not rule:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Regla no encontrada")
+
+        rows = conn.execute(
+            sql(
+                """
+                SELECT *
+                FROM rule_api_connections
+                WHERE rule_id = ? AND organization_id = ?
+                ORDER BY created_at DESC
+                """
+            ),
+            (rule_id, user["organization_id"]),
+        ).fetchall()
+    return [_serialize_rule_api(row) for row in rows]
+
+
+@router.post("/rules/{rule_id}/api-connections/test", response_model=RuleApiConnectionTestResponse)
+def test_rule_api_connection(
+    rule_id: int,
+    payload: RuleApiConnectionTestRequest,
+    user: dict = CurrentUser,
+) -> RuleApiConnectionTestResponse:
+    require_owner(user)
+    _validate_rule_api_payload(payload)
+    with db_session() as conn:
+        rule = conn.execute(
+            sql("SELECT id, name FROM automation_rules WHERE id = ? AND organization_id = ?"),
+            (rule_id, user["organization_id"]),
+        ).fetchone()
+        if not rule:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Regla no encontrada")
+
+    source_data = _sample_rule_api_source(rule["name"])
+    headers = _build_payload(payload.headers, source_data, stringify=True)
+    query_params = _build_payload(payload.query_params, source_data, stringify=True)
+    body = _build_payload(payload.body_fields, source_data)
+    method = payload.method.upper()
+    headers = {"X-Email-Assistance-Test": "true", **headers}
+
+    started_at = time.perf_counter()
+    try:
+        with httpx.Client(timeout=payload.timeout_seconds, trust_env=False) as client:
+            response = client.request(
+                method,
+                payload.url.strip(),
+                headers=headers or None,
+                params=query_params or None,
+                json=body if body and method not in {"GET", "DELETE"} else None,
+            )
+    except httpx.TimeoutException:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        return RuleApiConnectionTestResponse(
+            ok=False,
+            method=method,
+            url=payload.url.strip(),
+            elapsed_ms=elapsed_ms,
+            message=f"La API no respondio antes de {payload.timeout_seconds} segundos.",
+        )
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        return RuleApiConnectionTestResponse(
+            ok=False,
+            method=method,
+            url=payload.url.strip(),
+            elapsed_ms=elapsed_ms,
+            message=f"No fue posible conectar con la API: {exc}",
+        )
+
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    preview = response.text[:500] if response.text else None
+    ok = response.status_code < 400
+    return RuleApiConnectionTestResponse(
+        ok=ok,
+        method=method,
+        url=payload.url.strip(),
+        status_code=response.status_code,
+        elapsed_ms=elapsed_ms,
+        message=(
+            "Prueba exitosa. La API respondio correctamente."
+            if ok
+            else f"La API respondio con estado {response.status_code}. Revisa metodo, URL o payload."
+        ),
+        response_preview=preview,
+    )
+
+
+@router.post("/rules/{rule_id}/api-connections", response_model=RuleApiConnectionResponse, status_code=status.HTTP_201_CREATED)
+def create_rule_api_connection(
+    rule_id: int,
+    payload: RuleApiConnectionCreate,
+    user: dict = CurrentUser,
+) -> RuleApiConnectionResponse:
+    require_owner(user)
+    _validate_rule_api_payload(payload)
+    with db_session() as conn:
+        rule = conn.execute(
+            sql("SELECT id FROM automation_rules WHERE id = ? AND organization_id = ?"),
+            (rule_id, user["organization_id"]),
+        ).fetchone()
+        if not rule:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Regla no encontrada")
+
+        api_id = insert_and_get_id(
+            conn,
+            """
+            INSERT INTO rule_api_connections (
+                organization_id,
+                rule_id,
+                name,
+                method,
+                url,
+                headers,
+                query_params,
+                body_fields,
+                timeout_seconds,
+                is_active
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user["organization_id"],
+                rule_id,
+                payload.name.strip(),
+                payload.method.upper(),
+                payload.url.strip(),
+                json.dumps(payload.headers),
+                json.dumps(payload.query_params),
+                json.dumps(payload.body_fields),
+                payload.timeout_seconds,
+                payload.is_active if using_postgres() else int(payload.is_active),
+            ),
+        )
+        row = conn.execute(sql("SELECT * FROM rule_api_connections WHERE id = ?"), (api_id,)).fetchone()
+    return _serialize_rule_api(row)
+
+
+@router.patch("/api-connections/{api_connection_id}", response_model=RuleApiConnectionResponse)
+def update_rule_api_connection(
+    api_connection_id: int,
+    payload: RuleApiConnectionUpdate,
+    user: dict = CurrentUser,
+) -> RuleApiConnectionResponse:
+    require_owner(user)
+    _validate_rule_api_payload(payload)
+    with db_session() as conn:
+        existing = conn.execute(
+            sql("SELECT id FROM rule_api_connections WHERE id = ? AND organization_id = ?"),
+            (api_connection_id, user["organization_id"]),
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "API no encontrada")
+
+        conn.execute(
+            sql(
+                """
+                UPDATE rule_api_connections
+                SET name = ?,
+                    method = ?,
+                    url = ?,
+                    headers = ?,
+                    query_params = ?,
+                    body_fields = ?,
+                    timeout_seconds = ?,
+                    is_active = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND organization_id = ?
+                """
+            ),
+            (
+                payload.name.strip(),
+                payload.method.upper(),
+                payload.url.strip(),
+                json.dumps(payload.headers),
+                json.dumps(payload.query_params),
+                json.dumps(payload.body_fields),
+                payload.timeout_seconds,
+                payload.is_active if using_postgres() else int(payload.is_active),
+                api_connection_id,
+                user["organization_id"],
+            ),
+        )
+        row = conn.execute(sql("SELECT * FROM rule_api_connections WHERE id = ?"), (api_connection_id,)).fetchone()
+    return _serialize_rule_api(row)
+
+
+@router.delete("/api-connections/{api_connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_rule_api_connection(api_connection_id: int, user: dict = CurrentUser) -> None:
+    require_owner(user)
+    with db_session() as conn:
+        cursor = conn.execute(
+            sql("DELETE FROM rule_api_connections WHERE id = ? AND organization_id = ?"),
+            (api_connection_id, user["organization_id"]),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "API no encontrada")
 
 
 @router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)

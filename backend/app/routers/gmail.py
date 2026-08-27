@@ -14,6 +14,7 @@ from app.dependencies import CurrentUser, require_connection_access, require_own
 from app.followups import create_followup_for_message, evaluate_pending_followups
 from app.google_client import gmail_get, gmail_get_attachment, gmail_post, refresh_access_token
 from app.openai_client import email_matches_ai_rule
+from app.rule_api_dispatcher import dispatch_rule_api_connections
 from app.schemas import EmailMessageResponse, GmailSyncResponse, GmailWatchRequest, GmailWatchResponse, PubSubPushRequest
 from app.whatsapp_client import send_whatsapp_text_to_number
 
@@ -222,6 +223,17 @@ def _register_gmail_watch(
 def _decode_gmail_data(data: str) -> bytes:
     padded = data + "=" * (-len(data) % 4)
     return base64.urlsafe_b64decode(padded.encode("utf-8"))
+
+
+def _message_body_text(part: dict) -> str:
+    mime_type = part.get("mimeType") or ""
+    data = (part.get("body") or {}).get("data")
+    if data and mime_type.startswith("text/"):
+        try:
+            return _decode_gmail_data(data).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+    return "\n".join(_message_body_text(child) for child in part.get("parts") or []).strip()
 
 
 def _store_attachment_file(
@@ -527,6 +539,7 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
     subject = _header(headers, "Subject")
     recipients = _header(headers, "To")
     snippet = message.get("snippet")
+    body_text = _message_body_text(payload)
     matched_rule, rule_diagnostics = _matched_rule_for_message(
         conn,
         organization_id,
@@ -568,6 +581,7 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
         recipients,
         received_at,
         snippet,
+        body_text,
         has_attachments,
         matched_rule["id"],
         matched_rule["name"],
@@ -587,14 +601,16 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
                 recipients,
                 received_at,
                 snippet,
+                body_text,
                 has_attachments,
                 matched_rule_id,
                 matched_rule_name,
                 status,
                 raw_metadata
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (google_connection_id, gmail_message_id) DO UPDATE SET
+                body_text = EXCLUDED.body_text,
                 has_attachments = EXCLUDED.has_attachments,
                 matched_rule_id = EXCLUDED.matched_rule_id,
                 matched_rule_name = EXCLUDED.matched_rule_name,
@@ -618,13 +634,14 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
                 recipients,
                 received_at,
                 snippet,
+                body_text,
                 has_attachments,
                 matched_rule_id,
                 matched_rule_name,
                 status,
                 raw_metadata
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             values,
         )
@@ -632,10 +649,10 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
         conn.execute(
             """
             UPDATE email_messages
-            SET has_attachments = ?, matched_rule_id = ?, matched_rule_name = ?, status = ?, raw_metadata = ?
+            SET body_text = ?, has_attachments = ?, matched_rule_id = ?, matched_rule_name = ?, status = ?, raw_metadata = ?
             WHERE google_connection_id = ? AND gmail_message_id = ?
             """,
-            (has_attachments, matched_rule["id"], matched_rule["name"], message_status, json.dumps(message), connection_id, message["id"]),
+            (body_text, has_attachments, matched_rule["id"], matched_rule["name"], message_status, json.dumps(message), connection_id, message["id"]),
         )
         existing_message = conn.execute(
             sql("SELECT id FROM email_messages WHERE google_connection_id = ? AND gmail_message_id = ?"),
@@ -691,6 +708,27 @@ def _store_full_message(conn, access_token: str, organization_id: int, connectio
             received_at,
         )
         _send_whatsapp_rule_notification(conn, connection_id, matched_rule["id"], subject, sender, snippet)
+        connection_row = conn.execute(sql("SELECT email FROM google_connections WHERE id = ?"), (connection_id,)).fetchone()
+        dispatch_rule_api_connections(
+            conn,
+            organization_id,
+            connection_id,
+            message_row_id,
+            matched_rule,
+            {
+                "subject": subject,
+                "body_text": body_text,
+                "snippet": snippet,
+                "sender": sender,
+                "recipients": recipients,
+                "received_at": received_at,
+                "account_email": connection_row["email"] if connection_row else None,
+                "gmail_message_id": message.get("id"),
+                "gmail_thread_id": message.get("threadId"),
+                "gmail_history_id": message.get("historyId"),
+                "has_attachments": has_attachments,
+            },
+        )
 
     return stored, attachments_stored, message.get("historyId")
 

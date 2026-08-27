@@ -1,8 +1,62 @@
 :root {
-  color: #18221f;
-  background: #f4f6f8;
+  --color-bg: #070d1a;
+  --color-bg-soft: #0b1324;
+  --color-panel: #111a2d;
+  --color-panel-raised: #162037;
+  --color-text: #f7fbff;
+  --color-muted: #a8c4dd;
+  --color-border: #233654;
+  --color-primary: #00e5ff;
+  --color-primary-strong: #00bed8;
+  --color-primary-soft: #102a3a;
+  --color-primary-text: #03131b;
+  --color-subtle: #18243a;
+  --color-subtle-text: #b7c8d9;
+  --color-input: #0d1729;
+  --color-shadow: rgba(0, 0, 0, 0.34);
+  --color-focus: rgba(0, 229, 255, 0.2);
+  color: var(--color-text);
+  background: var(--color-bg);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html[data-theme="emerald"] {
+  --color-bg: #f4f6f8;
+  --color-bg-soft: #eef4f1;
+  --color-panel: #ffffff;
+  --color-panel-raised: #ffffff;
+  --color-text: #18221f;
+  --color-muted: #52635e;
+  --color-border: #dce4e1;
+  --color-primary: #17624d;
+  --color-primary-strong: #102820;
+  --color-primary-soft: #e8f3ef;
+  --color-primary-text: #ffffff;
+  --color-subtle: #eef2f0;
+  --color-subtle-text: #30403b;
+  --color-input: #ffffff;
+  --color-shadow: rgba(26, 39, 35, 0.08);
+  --color-focus: rgba(23, 98, 77, 0.14);
+}
+
+html[data-theme="slate"] {
+  --color-bg: #eef3f8;
+  --color-bg-soft: #e7eef7;
+  --color-panel: #ffffff;
+  --color-panel-raised: #ffffff;
+  --color-text: #152032;
+  --color-muted: #56657a;
+  --color-border: #d7e1ed;
+  --color-primary: #1f5f99;
+  --color-primary-strong: #153d67;
+  --color-primary-soft: #e5f0fb;
+  --color-primary-text: #ffffff;
+  --color-subtle: #edf2f7;
+  --color-subtle-text: #30445c;
+  --color-input: #ffffff;
+  --color-shadow: rgba(21, 32, 50, 0.08);
+  --color-focus: rgba(31, 95, 153, 0.16);
 }
 
 * {
@@ -10,6 +64,7 @@
 }
 
 body {
+  background: var(--color-bg);
   margin: 0;
 }
 
@@ -22,10 +77,10 @@ select {
 
 button {
   align-items: center;
-  background: #17624d;
+  background: var(--color-primary);
   border: 0;
   border-radius: 8px;
-  color: #fff;
+  color: var(--color-primary-text);
   cursor: pointer;
   display: inline-flex;
   font-weight: 750;
@@ -43,10 +98,10 @@ button:disabled {
 input,
 textarea,
 select {
-  background: #fff;
-  border: 1px solid #cfd8d5;
+  background: var(--color-input);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  color: #18221f;
+  color: var(--color-text);
   min-height: 40px;
   outline: none;
   padding: 0 12px;
@@ -67,8 +122,8 @@ input:focus,
 textarea:focus,
 select:focus,
 button:focus-visible {
-  border-color: #17624d;
-  box-shadow: 0 0 0 3px rgba(23, 98, 77, 0.14);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus);
   outline: none;
 }
 
@@ -124,10 +179,10 @@ button:focus-visible {
 .auth-panel,
 .panel,
 .metric-card {
-  background: #fff;
-  border: 1px solid #dce4e1;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  box-shadow: 0 18px 50px rgba(26, 39, 35, 0.07);
+  box-shadow: 0 18px 50px var(--color-shadow);
 }
 
 .auth-panel {
@@ -169,7 +224,7 @@ button:focus-visible {
 }
 
 .portal-icon {
-  background: #e8f3ef;
+  background: #ffffff;
   border: 1px solid #d5e6e0;
   border-radius: 8px;
   box-shadow: 0 10px 24px rgba(24, 34, 31, 0.08);
@@ -177,6 +232,153 @@ button:focus-visible {
   object-fit: contain;
   padding: 7px;
   width: 48px;
+}
+
+.public-shell {
+  display: grid;
+  gap: 36px;
+  margin: 0 auto;
+  max-width: 1120px;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.public-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.public-logo-link {
+  align-items: center;
+  display: inline-flex;
+}
+
+.public-logo-link img {
+  display: block;
+  height: auto;
+  width: 132px;
+}
+
+.public-nav {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.public-nav a,
+.secondary-link,
+.primary-link {
+  border-radius: 8px;
+  color: #17624d;
+  font-weight: 800;
+  min-height: 40px;
+  padding: 10px 12px;
+  text-decoration: none;
+}
+
+.public-login-link,
+.primary-link {
+  background: #17624d;
+  color: #fff !important;
+}
+
+.secondary-link {
+  background: #eef4f1;
+}
+
+.public-hero {
+  align-items: stretch;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
+  padding: 56px 0 24px;
+}
+
+.public-hero h1,
+.legal-page h1 {
+  font-size: 44px;
+  line-height: 1.02;
+  margin: 0 0 14px;
+}
+
+.public-hero p,
+.legal-page p,
+.public-grid p,
+.public-hero li,
+.legal-page li {
+  color: #52635e;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.public-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.public-hero-card,
+.public-grid article,
+.legal-page {
+  background: #fff;
+  border: 1px solid #dce4e1;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(26, 39, 35, 0.06);
+}
+
+.public-hero-card {
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+}
+
+.public-hero-card ul,
+.legal-page ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.public-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.public-grid article {
+  padding: 18px;
+}
+
+.public-grid h2,
+.legal-page h2 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+.legal-page {
+  display: grid;
+  gap: 16px;
+  margin: 18px auto 0;
+  max-width: 860px;
+  padding: 28px;
+}
+
+.legal-page p {
+  margin: 0;
+}
+
+.public-footer {
+  border-top: 1px solid #dce4e1;
+  color: #66746f;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 18px 0 8px;
 }
 
 .organization-shell {
@@ -440,6 +642,24 @@ label {
   width: 100%;
 }
 
+.message.success {
+  background: #e6f6ef;
+  border-color: #b9e4cf;
+  color: #0d5b3f;
+}
+
+.message.error {
+  background: #fdecec;
+  border-color: #f3c2c2;
+  color: #9a281f;
+}
+
+.message.info {
+  background: #eef6f4;
+  border-color: #cfe2dd;
+  color: #315f58;
+}
+
 .topbar,
 .session,
 .panel-header,
@@ -462,8 +682,91 @@ label {
 }
 
 .session {
-  color: #43504c;
+  color: var(--color-muted);
   gap: 12px;
+}
+
+.theme-menu {
+  position: relative;
+}
+
+.theme-popover {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 18px 54px var(--color-shadow);
+  display: grid;
+  gap: 6px;
+  min-width: 230px;
+  padding: 10px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  z-index: 30;
+}
+
+.theme-popover::before {
+  border: 8px solid transparent;
+  border-bottom-color: var(--color-border);
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: -16px;
+}
+
+.theme-popover > div {
+  display: grid;
+  gap: 2px;
+  padding: 4px 8px 8px;
+}
+
+.theme-popover > div strong {
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.theme-popover > div span {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.theme-popover button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 24px 1fr 18px;
+  justify-content: stretch;
+  min-height: 42px;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.theme-popover button:hover,
+.theme-popover button.active {
+  background: var(--color-primary-soft);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  color: var(--color-primary);
+}
+
+.theme-swatch {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  height: 18px;
+  width: 18px;
+}
+
+.theme-swatch.automated-mail {
+  background: linear-gradient(135deg, #070d1a 0 52%, #00e5ff 52% 100%);
+}
+
+.theme-swatch.emerald {
+  background: linear-gradient(135deg, #f4f6f8 0 52%, #17624d 52% 100%);
+}
+
+.theme-swatch.slate {
+  background: linear-gradient(135deg, #eef3f8 0 52%, #1f5f99 52% 100%);
 }
 
 .summary-grid {
@@ -492,14 +795,14 @@ label {
 }
 
 .account-tabs button {
-  background: #e9efed;
-  color: #17624d;
+  background: var(--color-subtle);
+  color: var(--color-primary);
   flex: 0 0 auto;
 }
 
 .account-tabs button.active {
-  background: #17624d;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--color-primary-text);
 }
 
 .workspace {
@@ -508,8 +811,8 @@ label {
 }
 
 .workspace-toolbar {
-  background: #fff;
-  border: 1px solid #dce4e1;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   gap: 16px;
   justify-content: space-between;
@@ -1486,14 +1789,14 @@ dd {
 
 .accounts-table th,
 .accounts-table td {
-  border-bottom: 1px solid #e0e7e4;
+  border-bottom: 1px solid var(--color-border);
   padding: 12px;
   text-align: left;
   vertical-align: middle;
 }
 
 .accounts-table th {
-  color: #52625d;
+  color: var(--color-muted);
   font-size: 12px;
   font-weight: 850;
   text-transform: uppercase;
@@ -1504,7 +1807,17 @@ dd {
 }
 
 .accounts-table tbody tr:hover {
-  background: #f6faf8;
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+}
+
+.accounts-table tbody tr:hover td,
+.accounts-table tbody tr:hover strong {
+  color: var(--color-text);
+}
+
+.accounts-table tbody tr:hover span {
+  color: var(--color-muted);
 }
 
 .accounts-table strong,
@@ -1514,14 +1827,14 @@ dd {
 }
 
 .accounts-table span {
-  color: #66746f;
+  color: var(--color-muted);
   font-size: 12px;
   margin-top: 4px;
 }
 
 .content-tabs {
-  background: #fff;
-  border: 1px solid #dce4e1;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   gap: 8px;
   overflow-x: auto;
@@ -1530,14 +1843,14 @@ dd {
 
 .content-tabs button,
 .segmented-control button {
-  background: #eef2f0;
-  color: #30403b;
+  background: var(--color-subtle);
+  color: var(--color-subtle-text);
 }
 
 .content-tabs button.active,
 .segmented-control button.active {
-  background: #17624d;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--color-primary-text);
 }
 
 .rules-table-list {
@@ -1694,6 +2007,10 @@ dd {
   max-width: 680px;
 }
 
+.api-modal {
+  max-width: 980px;
+}
+
 .modal-header {
   gap: 12px;
   justify-content: space-between;
@@ -1722,6 +2039,452 @@ dd {
   display: grid;
   gap: 12px;
   padding: 12px;
+}
+
+.api-config-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.api-connection-list {
+  background: #f8fbfa;
+  border: 1px solid #dfe7e4;
+  border-radius: 8px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+}
+
+.api-connection-list button {
+  background: #fff;
+  border: 1px solid #dfe7e4;
+  color: #18221f;
+  justify-content: flex-start;
+  min-height: 48px;
+  text-align: left;
+}
+
+.api-connection-list button.active {
+  background: #17624d;
+  border-color: #17624d;
+  color: #fff;
+}
+
+.api-connection-list span {
+  display: grid;
+  gap: 2px;
+}
+
+.api-connection-list small {
+  color: inherit;
+  font-size: 12px;
+  opacity: 0.78;
+}
+
+.api-config-form {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.api-basic-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(160px, 1fr) 120px minmax(110px, 0.4fr);
+}
+
+.api-url-field,
+.api-active-toggle {
+  grid-column: 1 / -1;
+}
+
+.api-mapping-section {
+  background: #f8fbfa;
+  border: 1px solid #dfe7e4;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.mapping-section-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.mapping-section-header div {
+  display: grid;
+  gap: 2px;
+}
+
+.mapping-section-header span {
+  color: #66746f;
+  font-size: 13px;
+}
+
+.mapping-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mapping-row {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(120px, 1fr) 145px minmax(150px, 1.1fr) 40px;
+}
+
+.mapping-row label {
+  min-width: 0;
+}
+
+.modal-actions-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.danger-text {
+  color: #a6332b;
+}
+
+.app-shell {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 7%, transparent), transparent 260px),
+    var(--color-bg);
+  color: var(--color-text);
+}
+
+.muted,
+.session,
+.message-meta,
+.detail-snippet,
+.empty,
+.compact-empty,
+.form-help,
+.event-card p {
+  color: var(--color-muted);
+}
+
+.secondary-button,
+.icon-button,
+.account-command,
+.work-tabs button,
+.toolbar-actions .secondary-button {
+  background: var(--color-subtle);
+  color: var(--color-subtle-text);
+}
+
+.secondary-button:hover,
+.icon-button:hover,
+.account-command:hover,
+.work-tabs button:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.work-tabs button.active,
+.account-command.solid,
+.rule-row .solid,
+.filter-toggle.active {
+  background: var(--color-primary);
+  color: var(--color-primary-text);
+}
+
+.panel,
+.workspace-toolbar,
+.account-focus,
+.work-tabs,
+.message-panel,
+.detail-panel,
+.rule-row,
+.event-card,
+.followup-row,
+.attachment-row,
+.filter-panel,
+.modal,
+.api-mapping-section,
+.api-connection-list,
+.api-connection-list button,
+.mapping-row,
+.organization-card,
+.account-table,
+.public-card,
+.auth-panel {
+  background: var(--color-panel);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.metric-card,
+.message-item,
+.event-detail-chip,
+.status.neutral,
+.toggle-row,
+.business-day-row,
+.api-config-form {
+  background: var(--color-panel-raised);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.message-item:hover,
+.message-item.selected {
+  background: var(--color-primary-soft);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+}
+
+.status,
+.password-toggle:hover,
+.password-toggle:focus-visible {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.portal-icon {
+  background: #ffffff;
+  border-color: #d5e6e0;
+}
+
+html[data-theme="automated-mail"] .eyebrow,
+html[data-theme="automated-mail"] .summary-number,
+html[data-theme="automated-mail"] h1,
+html[data-theme="automated-mail"] h2,
+html[data-theme="automated-mail"] h3 {
+  color: var(--color-text);
+}
+
+/* Theme safety layer: keep every operational view and modal readable across palettes. */
+.app-shell .panel,
+.app-shell .metric-card,
+.app-shell .workspace-toolbar,
+.app-shell .content-tabs,
+.app-shell .account-focus,
+.app-shell .message-panel,
+.app-shell .detail-panel,
+.app-shell .rule-row,
+.app-shell .followup-row,
+.app-shell .attachment-row,
+.app-shell .filter-panel,
+.app-shell .event-filters,
+.app-shell .event-card,
+.app-shell .event-rule-check,
+.app-shell .detail-card,
+.app-shell .followup-summary,
+.app-shell .business-day-schedule,
+.app-shell .radio-group,
+.app-shell .radio-option,
+.app-shell .account-picker,
+.app-shell .account-check,
+.app-shell .preference-group,
+.app-shell .toggle-row,
+.app-shell .ai-rule-box,
+.app-shell .api-connection-list,
+.app-shell .api-connection-list button,
+.app-shell .api-mapping-section,
+.app-shell .mapping-row,
+.modal {
+  background: var(--color-panel);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.app-shell .message-item,
+.app-shell .event-details > div,
+.app-shell .business-day-row,
+.app-shell .business-day-picker label,
+.app-shell .account-badges button,
+.app-shell .account-badges span,
+.app-shell .followup-summary span,
+.app-shell .segmented-control,
+.modal .segmented-control,
+.modal .preference-group,
+.modal .toggle-row,
+.modal .radio-option,
+.modal .account-check,
+.modal .ai-rule-box,
+.modal .api-mapping-section,
+.modal .api-connection-list,
+.modal .api-connection-list button,
+.modal .business-day-row,
+.modal .business-day-picker label {
+  background: var(--color-panel-raised);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.app-shell .secondary-button,
+.app-shell .icon-button,
+.app-shell .account-command,
+.app-shell .content-tabs button,
+.app-shell .work-tabs button,
+.app-shell .segmented-control button,
+.modal .secondary-button,
+.modal .icon-button,
+.modal .segmented-control button {
+  background: var(--color-subtle);
+  color: var(--color-subtle-text);
+}
+
+.app-shell .secondary-button:hover,
+.app-shell .icon-button:hover,
+.app-shell .account-command:hover,
+.app-shell .content-tabs button:hover,
+.app-shell .work-tabs button:hover,
+.app-shell .segmented-control button:hover,
+.modal .secondary-button:hover,
+.modal .icon-button:hover,
+.modal .segmented-control button:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.app-shell .content-tabs button.active,
+.app-shell .work-tabs button.active,
+.app-shell .segmented-control button.active,
+.modal .segmented-control button.active,
+.app-shell .account-command.solid,
+.app-shell .filter-toggle.active,
+.app-shell .api-connection-list button.active,
+.modal .api-connection-list button.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-text);
+}
+
+.app-shell .message-item:hover,
+.app-shell .message-item.selected,
+.app-shell .accounts-table tbody tr:hover,
+.app-shell .organization-card:hover,
+.app-shell .rule-row:hover {
+  background: var(--color-primary-soft);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+  color: var(--color-text);
+}
+
+.app-shell .muted,
+.app-shell .empty,
+.app-shell .results-count,
+.app-shell .message-item p,
+.app-shell .account-cell,
+.app-shell .message-meta,
+.app-shell .detail-snippet,
+.app-shell .rule-row span,
+.app-shell .compact-row span:last-child,
+.app-shell .event-row time,
+.app-shell .followup-row small,
+.app-shell .event-title span:not(.event-kicker),
+.app-shell .event-title time,
+.app-shell .event-kicker,
+.app-shell .event-message,
+.app-shell .event-details dt,
+.app-shell .toggle-row small,
+.app-shell .account-check small,
+.app-shell .mapping-section-header span,
+.app-shell dt,
+.modal .muted,
+.modal label,
+.modal .toggle-row small,
+.modal .mapping-section-header span,
+.modal .preference-group > span,
+.modal .business-day-schedule legend,
+.modal .radio-group legend {
+  color: var(--color-muted);
+}
+
+.app-shell .event-details dd,
+.app-shell dd,
+.app-shell .accounts-table td,
+.app-shell .accounts-table strong,
+.app-shell .message-item h3,
+.app-shell .message-main strong,
+.modal input,
+.modal textarea,
+.modal select {
+  color: var(--color-text);
+}
+
+.app-shell .event-card {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-panel-raised) 88%, var(--color-primary) 12%) 0%,
+    var(--color-panel) 100%
+  );
+  box-shadow: 0 10px 22px var(--color-shadow);
+}
+
+.app-shell .event-card-icon {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.app-shell .event-warning .event-card-icon,
+.app-shell .event-check-list .failed {
+  background: #fff2d9;
+  color: #9a620c;
+}
+
+.app-shell .event-danger .event-card-icon {
+  background: #f8e7e4;
+  color: #a43b31;
+}
+
+.app-shell .event-success .event-card-icon,
+.app-shell .event-check-list .passed,
+.app-shell .business-day-picker label.selected {
+  background: var(--color-primary-soft);
+  border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
+  color: var(--color-primary);
+}
+
+.app-shell .toggle-row.off,
+.modal .toggle-row.off,
+.app-shell .disabled-check,
+.modal .disabled-check,
+.app-shell .business-day-row.disabled,
+.modal .business-day-row.disabled {
+  background: color-mix(in srgb, var(--color-panel) 75%, var(--color-bg) 25%);
+  color: var(--color-muted);
+}
+
+.app-shell .toggle-row.off small,
+.app-shell .toggle-row.off strong,
+.modal .toggle-row.off small,
+.modal .toggle-row.off strong {
+  color: var(--color-muted);
+}
+
+.modal-backdrop {
+  background: color-mix(in srgb, var(--color-bg) 62%, rgba(0, 0, 0, 0.55));
+}
+
+.modal-form,
+.whatsapp-settings-form {
+  border-color: var(--color-border);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--color-muted) 78%, transparent);
+}
+
+.app-shell .filter-panel label,
+.app-shell .event-filters label,
+.app-shell .filter-panel label span,
+.app-shell .event-filters label span {
+  color: color-mix(in srgb, var(--color-muted) 78%, var(--color-text) 22%);
+}
+
+html[data-theme="automated-mail"] .app-shell .filter-panel label,
+html[data-theme="automated-mail"] .app-shell .event-filters label,
+html[data-theme="automated-mail"] .app-shell .filter-panel label span,
+html[data-theme="automated-mail"] .app-shell .event-filters label span {
+  color: #b8d7ef;
 }
 
 @media (max-width: 1180px) {
@@ -1762,6 +2525,30 @@ dd {
 
 @media (max-width: 900px) {
   .master-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .public-header,
+  .public-hero {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .public-header {
+    flex-direction: column;
+  }
+
+  .public-nav {
+    justify-content: center;
+  }
+
+  .public-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .api-config-layout,
+  .api-basic-grid,
+  .mapping-row {
     grid-template-columns: 1fr;
   }
 

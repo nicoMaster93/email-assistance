@@ -38,6 +38,12 @@ Consulta la guia funcional de la aplicacion en:
 docs/manual-usuario.md
 ```
 
+Preparacion para verificacion OAuth de Google:
+
+```text
+docs/google-approval-readiness.md
+```
+
 ## URLs locales
 
 ```text

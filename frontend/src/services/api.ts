@@ -135,6 +135,7 @@ export type AutomationRule = {
   google_connection_id: number | null;
   connection_ids: number[];
   whatsapp_enabled_connection_ids: number[];
+  api_connection_count: number;
   name: string;
   is_active: boolean;
   sender_contains: string | null;
@@ -144,6 +145,39 @@ export type AutomationRule = {
   configuration: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+};
+
+export type ApiMapping = {
+  target: string;
+  source_type: "field" | "literal";
+  source_key?: string;
+  literal?: string;
+};
+
+export type RuleApiConnection = {
+  id: number;
+  organization_id: number;
+  rule_id: number;
+  name: string;
+  method: string;
+  url: string;
+  headers: ApiMapping[];
+  query_params: ApiMapping[];
+  body_fields: ApiMapping[];
+  timeout_seconds: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RuleApiConnectionTestResponse = {
+  ok: boolean;
+  method: string;
+  url: string;
+  status_code: number | null;
+  elapsed_ms: number;
+  message: string;
+  response_preview: string | null;
 };
 
 export type EmailFollowup = {
@@ -464,6 +498,7 @@ export function listRules(token: string) {
       whatsapp_enabled_connection_ids: Array.isArray(rule.whatsapp_enabled_connection_ids)
         ? rule.whatsapp_enabled_connection_ids
         : [],
+      api_connection_count: Number(rule.api_connection_count || 0),
       configuration: rule.configuration || {},
     })),
   );
@@ -555,6 +590,59 @@ export function evaluateFollowups(token: string, connectionId?: number | null) {
   );
 }
 
+export function listRuleApiConnections(token: string, ruleId: number) {
+  return request<RuleApiConnection[]>(`/automation/rules/${ruleId}/api-connections`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function createRuleApiConnection(
+  token: string,
+  ruleId: number,
+  payload: Omit<RuleApiConnection, "id" | "organization_id" | "rule_id" | "created_at" | "updated_at">,
+) {
+  return request<RuleApiConnection>(`/automation/rules/${ruleId}/api-connections`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function testRuleApiConnection(
+  token: string,
+  ruleId: number,
+  payload: Omit<RuleApiConnection, "id" | "organization_id" | "rule_id" | "created_at" | "updated_at">,
+) {
+  return request<RuleApiConnectionTestResponse>(`/automation/rules/${ruleId}/api-connections/test`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateRuleApiConnection(
+  token: string,
+  apiConnectionId: number,
+  payload: Omit<RuleApiConnection, "id" | "organization_id" | "rule_id" | "created_at" | "updated_at">,
+) {
+  return request<RuleApiConnection>(`/automation/api-connections/${apiConnectionId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteRuleApiConnection(token: string, apiConnectionId: number) {
+  return apiFetch(`/automation/api-connections/${apiConnectionId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((response) => {
+    if (!response.ok) {
+      throw new Error("No se pudo eliminar la API");
+    }
+  });
+}
+
 export function draftRuleFromText(token: string, payload: { text: string; connection_ids: number[] }) {
   return request<{
     name: string;
@@ -604,7 +692,7 @@ export function listEvents(token: string, filters: EventFilters = {}) {
 }
 
 export function deleteConnection(token: string, id: number) {
-  return apiFetch(`/google-connections/${id}`, {
+  return apiFetch(`/google-connections/${id}/google-data`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   }).then((response) => {

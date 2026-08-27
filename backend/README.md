@@ -33,6 +33,7 @@ Archivo: `backend/.env`
 ```text
 APP_SECRET=change-this-dev-secret-before-production
 FRONTEND_ORIGIN=http://localhost:5173
+CORS_ORIGINS=http://localhost:5173
 DATABASE_URL=postgresql://email_assistance:email_assistance@localhost:5432/email_assistance
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=

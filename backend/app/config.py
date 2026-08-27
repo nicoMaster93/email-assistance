@@ -16,6 +16,11 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 APP_SECRET = os.getenv("APP_SECRET", "change-this-local-dev-secret")
 TOKEN_TTL_SECONDS = 60 * 60 * 8
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://127.0.0.1:5173")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", FRONTEND_ORIGIN).split(",")
+    if origin.strip()
+]
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/google/oauth/callback")

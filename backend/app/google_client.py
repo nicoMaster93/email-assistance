@@ -7,6 +7,7 @@ from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 from app.security import decrypt_secret
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 
 
@@ -77,3 +78,24 @@ def gmail_post(access_token: str, path: str, payload: dict) -> dict:
 
 def gmail_get_attachment(access_token: str, message_id: str, attachment_id: str) -> dict:
     return gmail_get(access_token, f"/users/me/messages/{message_id}/attachments/{attachment_id}")
+
+
+def revoke_refresh_token(encrypted_refresh_token: str | None) -> bool:
+    if not encrypted_refresh_token:
+        return False
+
+    try:
+        refresh_token = decrypt_secret(encrypted_refresh_token)
+    except Exception:
+        return False
+
+    if not refresh_token:
+        return False
+
+    try:
+        with httpx.Client(timeout=10, trust_env=False) as client:
+            response = client.post(GOOGLE_REVOKE_URL, data={"token": refresh_token})
+    except httpx.HTTPError:
+        return False
+
+    return response.status_code in (200, 400)
