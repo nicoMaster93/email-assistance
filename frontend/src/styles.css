@@ -2262,6 +2262,8 @@ html[data-theme="automated-mail"] h3 {
 /* Theme safety layer: keep every operational view and modal readable across palettes. */
 .app-shell .panel,
 .app-shell .metric-card,
+.app-shell .organization-panel,
+.app-shell .empty-organization-state,
 .app-shell .workspace-toolbar,
 .app-shell .content-tabs,
 .app-shell .account-focus,
@@ -2295,6 +2297,7 @@ html[data-theme="automated-mail"] h3 {
 }
 
 .app-shell .message-item,
+.app-shell .organization-card,
 .app-shell .event-details > div,
 .app-shell .business-day-row,
 .app-shell .business-day-picker label,
@@ -2357,6 +2360,10 @@ html[data-theme="automated-mail"] h3 {
   color: var(--color-primary-text);
 }
 
+.app-shell .organization-card-main:hover strong {
+  color: var(--color-primary);
+}
+
 .app-shell .message-item:hover,
 .app-shell .message-item.selected,
 .app-shell .accounts-table tbody tr:hover,
@@ -2369,6 +2376,7 @@ html[data-theme="automated-mail"] h3 {
 
 .app-shell .muted,
 .app-shell .empty,
+.app-shell .eyebrow,
 .app-shell .results-count,
 .app-shell .message-item p,
 .app-shell .account-cell,
@@ -2383,6 +2391,7 @@ html[data-theme="automated-mail"] h3 {
 .app-shell .event-kicker,
 .app-shell .event-message,
 .app-shell .event-details dt,
+.app-shell .organization-card-main > span:last-child,
 .app-shell .toggle-row small,
 .app-shell .account-check small,
 .app-shell .mapping-section-header span,
@@ -2403,6 +2412,8 @@ html[data-theme="automated-mail"] h3 {
 .app-shell .accounts-table strong,
 .app-shell .message-item h3,
 .app-shell .message-main strong,
+.app-shell .organization-card-main,
+.app-shell .organization-card strong,
 .modal input,
 .modal textarea,
 .modal select {
@@ -2421,6 +2432,17 @@ html[data-theme="automated-mail"] h3 {
 .app-shell .event-card-icon {
   background: var(--color-primary-soft);
   color: var(--color-primary);
+}
+
+.app-shell .organization-icon {
+  background: var(--color-primary-soft);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  color: var(--color-primary);
+}
+
+.app-shell .organization-card-main > span:last-child {
+  background: var(--color-subtle);
+  color: var(--color-subtle-text);
 }
 
 .app-shell .event-warning .event-card-icon,

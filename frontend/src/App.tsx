@@ -173,7 +173,7 @@ function ToggleRow({
 function BrandTitle({ subtitle, title }: { subtitle: string; title: string }) {
   return (
     <div className="brand-title">
-      <img className="portal-icon" src="/email-assistance-icon-192.png" alt="" aria-hidden="true" />
+      <img className="portal-icon" src="/email-assistance-icon-192-blue.png" alt="" aria-hidden="true" />
       <div>
         <p className="eyebrow">Email Assistance</p>
         <h1>{title}</h1>
@@ -236,7 +236,7 @@ function PublicHeader() {
   return (
     <header className="public-header">
       <a className="public-logo-link" href="/" aria-label="Email Assistance">
-        <img src="/logo-email-assitance.png" alt="Email Assistance" />
+        <img src="/logo-email-assitance-blue.png" alt="Email Assistance" />
       </a>
       <nav className="public-nav" aria-label="Legal">
         <a href="/privacy-policy">Privacidad</a>
@@ -2326,7 +2326,7 @@ export function App() {
       <main className="auth-shell">
         <section className="auth-panel">
           <div className="auth-brand">
-            <img className="auth-logo" src="/logo-email-assitance.png" alt="Email Assistance" />
+            <img className="auth-logo" src="/logo-email-assitance-blue.png" alt="Email Assistance" />
             <div>
               <h1>Iniciar sesion</h1>
               <p className="muted">Accede a tu centro de procesamiento de correos.</p>
