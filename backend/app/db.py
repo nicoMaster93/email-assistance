@@ -70,12 +70,12 @@ def seed_demo_user(conn: Any) -> None:
 
     user = conn.execute(sql("SELECT id FROM users WHERE email = ?"), (DEMO_USER["email"],)).fetchone()
     if user:
-        conn.execute(sql("UPDATE users SET platform_role = 'root' WHERE id = ?"), (user["id"],))
+        conn.execute(sql("UPDATE users SET platform_role = 'root', is_active = 1 WHERE id = ?"), (user["id"],))
         return
 
     user_id = insert_and_get_id(
         conn,
-        "INSERT INTO users (name, email, password_hash, platform_role) VALUES (?, ?, ?, 'root')",
+        "INSERT INTO users (name, email, password_hash, platform_role, is_active) VALUES (?, ?, ?, 'root', 1)",
         (DEMO_USER["name"], DEMO_USER["email"], hash_password(DEMO_USER["password"])),
     )
     organization_id = insert_and_get_id(
@@ -90,6 +90,7 @@ def seed_demo_user(conn: Any) -> None:
 
 def ensure_schema_columns(conn: Any) -> None:
     if using_postgres():
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
         conn.execute("ALTER TABLE google_connections ADD COLUMN IF NOT EXISTS access_token_expires_at TIMESTAMPTZ")
         conn.execute("ALTER TABLE google_connections ADD COLUMN IF NOT EXISTS display_name TEXT")
         conn.execute("ALTER TABLE google_connections ADD COLUMN IF NOT EXISTS purpose TEXT")
@@ -252,6 +253,7 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     platform_role TEXT NOT NULL DEFAULT 'root',
+    is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -418,6 +420,7 @@ POSTGRES_SCHEMA = [
         email TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
         platform_role TEXT NOT NULL DEFAULT 'root',
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,

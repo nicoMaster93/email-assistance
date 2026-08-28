@@ -120,6 +120,8 @@ El nuevo root podra iniciar sesion y crear sus propias organizaciones.
 
 Cada root queda aislado: solo ve las organizaciones, cuentas, reglas y correos que haya creado o que le pertenezcan.
 
+Desde el listado de usuarios administradores tambien puedes inactivar, activar o eliminar usuarios root. Un root inactivo no puede iniciar sesion ni seguir usando tokens activos. Al eliminar un root, el sistema pide confirmacion y borra en cascada sus organizaciones, cuentas, reglas, correos, adjuntos, seguimientos, eventos e integraciones.
+
 ## Organizaciones
 
 Disponible para usuarios root.
@@ -359,10 +361,15 @@ Flujo:
 
 1. Presiona `WhatsApp`.
 2. Ingresa el numero.
-3. Presiona `Abrir WhatsApp Web`.
-4. Se abre un mensaje con codigo hacia el asistente.
-5. Cuando el proveedor de WhatsApp llama el webhook, el backend valida el codigo.
-6. El numero queda asociado a la cuenta.
+3. Puedes confirmar de dos formas:
+   - `Generar QR`: muestra un codigo QR dentro del modal para escanearlo desde el telefono.
+   - `Abrir WhatsApp Web`: abre WhatsApp Web con el mensaje prellenado.
+4. En ambos casos se abre un mensaje con codigo hacia el asistente.
+5. Envia el mensaje prellenado.
+6. Cuando el proveedor de WhatsApp llama el webhook, el backend valida el codigo.
+7. El numero queda asociado a la cuenta.
+
+El sistema valida que se ingrese un numero antes de generar el QR o abrir WhatsApp Web.
 
 Preferencias disponibles:
 

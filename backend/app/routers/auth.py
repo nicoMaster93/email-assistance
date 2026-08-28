@@ -1,9 +1,12 @@
+import shutil
+
 from fastapi import APIRouter, HTTPException, status
 
+from app.config import ATTACHMENTS_DIR
 from app.db import db_session, sql
 from app.dependencies import CurrentUser, require_super_root
 from app.db import insert_and_get_id
-from app.schemas import LoginRequest, LoginResponse, RootUserCreate, UserProfileUpdate, UserResponse
+from app.schemas import LoginRequest, LoginResponse, RootUserCreate, RootUserStatusUpdate, UserProfileUpdate, UserResponse
 from app.security import create_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -15,7 +18,7 @@ def login(payload: LoginRequest) -> LoginResponse:
         user = conn.execute(
             sql(
             """
-            SELECT u.id, u.name, u.email, u.password_hash, u.platform_role
+            SELECT u.id, u.name, u.email, u.password_hash, u.platform_role, u.is_active
             FROM users u
             WHERE u.email = ?
             LIMIT 1
@@ -26,6 +29,8 @@ def login(payload: LoginRequest) -> LoginResponse:
 
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciales invalidas")
+    if not bool(user["is_active"]):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Usuario inactivo")
 
     with db_session() as conn:
         membership = conn.execute(
@@ -50,6 +55,7 @@ def login(payload: LoginRequest) -> LoginResponse:
         "name": user["name"],
         "email": user["email"],
         "platform_role": user["platform_role"],
+        "is_active": bool(user["is_active"]),
         "organization_id": membership["organization_id"] if membership else None,
         "role": role,
         "assigned_connection_id": membership["assigned_connection_id"] if membership else None,
@@ -115,6 +121,7 @@ def _serialize_user(row) -> UserResponse:
         name=row["name"],
         email=row["email"],
         platform_role=row["platform_role"],
+        is_active=bool(row["is_active"]),
         created_at=str(row["created_at"]) if "created_at" in row.keys() and row["created_at"] else None,
     )
 
@@ -126,10 +133,10 @@ def list_root_users(user: dict = CurrentUser) -> list[UserResponse]:
         rows = conn.execute(
             sql(
                 """
-                SELECT id, name, email, platform_role, created_at
+                SELECT id, name, email, platform_role, is_active, created_at
                 FROM users
                 WHERE platform_role = 'root'
-                ORDER BY created_at DESC
+                ORDER BY is_active DESC, created_at DESC
                 """
             )
         ).fetchall()
@@ -149,7 +156,7 @@ def create_root_user(payload: RootUserCreate, user: dict = CurrentUser) -> UserR
         try:
             user_id = insert_and_get_id(
                 conn,
-                "INSERT INTO users (name, email, password_hash, platform_role) VALUES (?, ?, ?, 'root')",
+                "INSERT INTO users (name, email, password_hash, platform_role, is_active) VALUES (?, ?, ?, 'root', TRUE)",
                 (name, str(payload.email), hash_password(payload.password)),
             )
         except Exception as exc:
@@ -157,8 +164,80 @@ def create_root_user(payload: RootUserCreate, user: dict = CurrentUser) -> UserR
                 raise HTTPException(status.HTTP_409_CONFLICT, "Ese correo ya esta en uso") from exc
             raise
         row = conn.execute(
-            sql("SELECT id, name, email, platform_role, created_at FROM users WHERE id = ?"),
+            sql("SELECT id, name, email, platform_role, is_active, created_at FROM users WHERE id = ?"),
             (user_id,),
         ).fetchone()
 
     return _serialize_user(row)
+
+
+@router.patch("/root-users/{root_user_id}/status", response_model=UserResponse)
+def update_root_user_status(root_user_id: int, payload: RootUserStatusUpdate, user: dict = CurrentUser) -> UserResponse:
+    require_super_root(user)
+    with db_session() as conn:
+        root_user = conn.execute(
+            sql("SELECT id FROM users WHERE id = ? AND platform_role = 'root'"),
+            (root_user_id,),
+        ).fetchone()
+        if not root_user:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuario root no encontrado")
+
+        conn.execute(
+            sql("UPDATE users SET is_active = ? WHERE id = ? AND platform_role = 'root'"),
+            (payload.is_active, root_user_id),
+        )
+        updated = conn.execute(
+            sql("SELECT id, name, email, platform_role, is_active, created_at FROM users WHERE id = ?"),
+            (root_user_id,),
+        ).fetchone()
+
+    return _serialize_user(updated)
+
+
+@router.delete("/root-users/{root_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_root_user(root_user_id: int, user: dict = CurrentUser) -> None:
+    require_super_root(user)
+    organization_ids: list[int] = []
+    account_user_ids: set[int] = set()
+    with db_session() as conn:
+        root_user = conn.execute(
+            sql("SELECT id FROM users WHERE id = ? AND platform_role = 'root'"),
+            (root_user_id,),
+        ).fetchone()
+        if not root_user:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuario root no encontrado")
+
+        organization_rows = conn.execute(
+            sql("SELECT organization_id FROM organization_members WHERE user_id = ?"),
+            (root_user_id,),
+        ).fetchall()
+        organization_ids = [row["organization_id"] for row in organization_rows]
+
+        for organization_id in organization_ids:
+            assigned_rows = conn.execute(
+                sql(
+                    """
+                    SELECT assigned_user_id
+                    FROM google_connections
+                    WHERE organization_id = ? AND assigned_user_id IS NOT NULL
+                    """
+                ),
+                (organization_id,),
+            ).fetchall()
+            account_user_ids.update(row["assigned_user_id"] for row in assigned_rows)
+            conn.execute(sql("DELETE FROM organizations WHERE id = ?"), (organization_id,))
+
+        for account_user_id in account_user_ids:
+            conn.execute(sql("DELETE FROM users WHERE id = ? AND platform_role = 'account_user'"), (account_user_id,))
+
+        conn.execute(sql("DELETE FROM users WHERE id = ? AND platform_role = 'root'"), (root_user_id,))
+
+    attachments_root = ATTACHMENTS_DIR.resolve()
+    for organization_id in organization_ids:
+        organization_folder = (attachments_root / str(organization_id)).resolve()
+        try:
+            organization_folder.relative_to(attachments_root)
+        except ValueError:
+            continue
+        if organization_folder.exists():
+            shutil.rmtree(organization_folder)

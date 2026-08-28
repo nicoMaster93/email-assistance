@@ -64,6 +64,8 @@ rol: super_root
 
 Este usuario permite crear usuarios root. Cada root crea sus propias organizaciones y administra sus cuentas. La clave inicial se define en la migracion bootstrap y debe cambiarse desde el perfil despues del primer ingreso.
 
+En el panel master se pueden crear, activar, inactivar y eliminar usuarios root. La eliminacion solicita confirmacion y borra en cascada las organizaciones y datos asociados del root.
+
 ## Docker solo frontend
 
 Con el backend ya disponible:

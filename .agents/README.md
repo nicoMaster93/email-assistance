@@ -19,6 +19,7 @@ Lee primero:
 - Docker Compose: `db`, `backend`, `frontend`.
 - Auth: token Bearer propio con roles `super_root`, `root` y `account_user`.
 - Usuario bootstrap super root: `master@emailasistance.com`. Se crea en BD por migracion y su clave debe tratarse como credencial sensible.
+- El super root administra roots: puede crearlos, inactivarlos, activarlos y eliminarlos. El borrado de root elimina en cascada sus organizaciones y datos asociados.
 - Google OAuth: endpoints base implementados en `backend/app/routers/google_oauth.py`.
 - Vinculacion de cuentas: OAuth real disponible si hay credenciales; el root puede crear acceso de usuario de cuenta y vincular ahora o despues.
 - Adjuntos: almacenamiento local dentro del backend, no MinIO.

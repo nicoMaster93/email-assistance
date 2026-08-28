@@ -61,6 +61,8 @@ La aplicacion maneja tres niveles:
 - `root`: crea y administra sus propias organizaciones, cuentas Gmail, reglas, monitores, WhatsApp, seguimientos e integraciones.
 - `account_user`: usuario asociado a una sola cuenta Gmail. Puede vincular o re-vincular Gmail, sincronizar y consultar sus correos/adjuntos.
 
+El `super_root` puede crear, inactivar, activar y eliminar usuarios `root`. Inactivar bloquea el acceso sin borrar datos; eliminar pide confirmacion y borra en cascada las organizaciones y datos asociados de ese root.
+
 Usuario bootstrap inicial:
 
 ```text

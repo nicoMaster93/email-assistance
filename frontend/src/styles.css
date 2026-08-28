@@ -1065,14 +1065,88 @@ label {
   width: 16px;
 }
 
+.whatsapp-modal-grid {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(340px, 1.05fr);
+}
+
+.whatsapp-setup-card,
+.whatsapp-preferences {
+  background: var(--color-panel-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+}
+
 .whatsapp-settings-form {
-  border-bottom: 1px solid #e2e8e5;
-  padding-bottom: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.whatsapp-action-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.whatsapp-qr-panel {
+  align-content: start;
+  background: color-mix(in srgb, var(--color-panel) 86%, var(--color-bg) 14%);
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-height: 320px;
+  padding: 14px;
+}
+
+.whatsapp-qr-box {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d7e1ed;
+  border-radius: 8px;
+  display: flex;
+  justify-content: center;
+  justify-self: center;
+  padding: 12px;
+  width: min(100%, 244px);
+}
+
+.whatsapp-qr-box img {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.whatsapp-qr-link {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  justify-content: center;
+  justify-self: stretch;
+}
+
+.whatsapp-empty-qr {
+  align-content: center;
+  color: var(--color-muted);
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 230px;
+  text-align: center;
+}
+
+.whatsapp-empty-qr strong {
+  color: var(--color-text);
 }
 
 .whatsapp-preferences {
-  display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .preference-group {
@@ -1893,6 +1967,18 @@ dd {
   margin-top: 4px;
 }
 
+.root-user-row.inactive {
+  opacity: 0.78;
+}
+
+.root-user-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .account-actions,
 .account-badges,
 .account-picker {
@@ -2022,6 +2108,10 @@ dd {
 
 .api-modal {
   max-width: 980px;
+}
+
+.whatsapp-modal {
+  max-width: min(940px, calc(100vw - 48px));
 }
 
 .modal-header {
@@ -2555,6 +2645,20 @@ html[data-theme="automated-mail"] .app-shell .event-filters label span {
 
   .detail-panel {
     position: static;
+  }
+}
+
+@media (max-width: 860px) {
+  .whatsapp-modal {
+    max-width: none;
+  }
+
+  .whatsapp-modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .whatsapp-action-grid {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -262,6 +262,8 @@ La clave inicial es una credencial sensible definida por la migracion bootstrap.
 
 Cada usuario root puede crear sus propias organizaciones, cuentas, reglas y configuraciones. Un root no ve organizaciones ni datos creados por otros roots.
 
+El super root puede crear, inactivar, activar y eliminar usuarios root. Los usuarios inactivos no pueden iniciar sesion ni usar tokens existentes. La eliminacion borra en cascada las organizaciones y datos asociados del root, incluyendo cuentas, reglas, correos, adjuntos, seguimientos, eventos e integraciones.
+
 ## Flujo rapido
 
 Login:

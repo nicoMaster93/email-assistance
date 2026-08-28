@@ -15,6 +15,7 @@ export type RootUser = {
   name: string;
   email: string;
   platform_role: string;
+  is_active: boolean;
   created_at: string | null;
 };
 
@@ -269,6 +270,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error(error.detail ?? "Error inesperado");
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json() as Promise<T>;
 }
 
@@ -298,6 +303,21 @@ export function createRootUser(token: string, payload: { name: string; email: st
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateRootUserStatus(token: string, id: number, isActive: boolean) {
+  return request<RootUser>(`/auth/root-users/${id}/status`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ is_active: isActive }),
+  });
+}
+
+export function deleteRootUser(token: string, id: number) {
+  return request<void>(`/auth/root-users/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
   });
 }
 

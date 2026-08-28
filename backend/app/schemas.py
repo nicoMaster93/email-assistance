@@ -29,7 +29,12 @@ class UserResponse(BaseModel):
     name: str
     email: EmailStr
     platform_role: str
+    is_active: bool = True
     created_at: str | None = None
+
+
+class RootUserStatusUpdate(BaseModel):
+    is_active: bool
 
 
 class OrganizationCreate(BaseModel):

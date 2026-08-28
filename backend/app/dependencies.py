@@ -15,7 +15,7 @@ def authenticated_user(request: Request) -> dict:
         user = conn.execute(
             sql(
             """
-            SELECT u.id, u.name, u.email, u.platform_role
+            SELECT u.id, u.name, u.email, u.platform_role, u.is_active
             FROM users u
             WHERE u.id = ?
             LIMIT 1
@@ -26,6 +26,8 @@ def authenticated_user(request: Request) -> dict:
 
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Usuario no encontrado")
+    if not bool(user["is_active"]):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Usuario inactivo")
 
     return dict(user)
 

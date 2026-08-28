@@ -25,6 +25,7 @@ MIGRATIONS = [
     Migration("0009_platform_roles", "app.migrations.v0009_platform_roles"),
     Migration("0010_seed_super_root_user", "app.migrations.v0010_seed_super_root_user"),
     Migration("0011_rule_api_connections", "app.migrations.v0011_rule_api_connections"),
+    Migration("0012_user_activation", "app.migrations.v0012_user_activation"),
 ]
 
 

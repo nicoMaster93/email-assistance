@@ -18,6 +18,7 @@ import {
   Palette,
   Paperclip,
   Plus,
+  QrCode,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -40,6 +41,7 @@ import {
   createRule,
   deleteConnection,
   deleteOrganization,
+  deleteRootUser,
   deleteRuleApiConnection,
   deleteRule,
   EmailFollowup,
@@ -74,6 +76,7 @@ import {
   updateRule,
   updateRuleApiConnection,
   updateRuleFollowup,
+  updateRootUserStatus,
   updateRuleWhatsAppNotifications,
   updateWhatsAppPreferences,
   User,
@@ -759,6 +762,7 @@ export function App() {
   const [whatsAppConnectionTarget, setWhatsAppConnectionTarget] = useState<GoogleConnection | null>(null);
   const [whatsAppNumber, setWhatsAppNumber] = useState("");
   const [whatsAppModalMessage, setWhatsAppModalMessage] = useState("");
+  const [whatsAppSetupUrl, setWhatsAppSetupUrl] = useState("");
   const [whatsAppNotificationsEnabled, setWhatsAppNotificationsEnabled] = useState(true);
   const [whatsAppNotifyNewEmail, setWhatsAppNotifyNewEmail] = useState(true);
   const [whatsAppNotifyFollowupOverdue, setWhatsAppNotifyFollowupOverdue] = useState(true);
@@ -1573,6 +1577,44 @@ export function App() {
     }
   }
 
+  async function handleToggleRootUser(rootUser: RootUser) {
+    const nextState = !rootUser.is_active;
+    const action = nextState ? "activar" : "inactivar";
+    const confirmed = window.confirm(`Vas a ${action} el usuario root ${rootUser.email}.`);
+    if (!confirmed) return;
+
+    setLoading(true);
+    setRootUserMessage("");
+    try {
+      await updateRootUserStatus(token, rootUser.id, nextState);
+      setRootUserMessage(nextState ? "Usuario root activado." : "Usuario root inactivado.");
+      await refreshRootUsers();
+    } catch (error) {
+      setRootUserMessage(error instanceof Error ? error.message : "No se pudo actualizar el usuario root");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDeleteRootUser(rootUser: RootUser) {
+    const confirmed = window.confirm(
+      `Vas a eliminar el usuario root ${rootUser.email} y todos sus datos asociados: organizaciones, cuentas, reglas, correos, adjuntos, seguimientos, eventos e integraciones. Esta accion no se puede deshacer.`
+    );
+    if (!confirmed) return;
+
+    setLoading(true);
+    setRootUserMessage("");
+    try {
+      await deleteRootUser(token, rootUser.id);
+      setRootUserMessage("Usuario root eliminado.");
+      await refreshRootUsers();
+    } catch (error) {
+      setRootUserMessage(error instanceof Error ? error.message : "No se pudo eliminar el usuario root");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function resetAccountModal() {
     setEditingAccount(null);
     setNewAccountName("");
@@ -1699,6 +1741,7 @@ export function App() {
   function openWhatsAppModal(connection: GoogleConnection) {
     setWhatsAppConnectionTarget(connection);
     setWhatsAppNumber(connection.whatsapp_number || "");
+    setWhatsAppSetupUrl("");
     setWhatsAppNotificationsEnabled(connection.whatsapp_notifications_enabled);
     setWhatsAppNotifyNewEmail(connection.whatsapp_notify_new_email);
     setWhatsAppNotifyFollowupOverdue(connection.whatsapp_notify_followup_overdue);
@@ -1711,6 +1754,7 @@ export function App() {
   function closeWhatsAppModal() {
     setWhatsAppConnectionTarget(null);
     setWhatsAppModalMessage("");
+    setWhatsAppSetupUrl("");
   }
 
   function setAllWhatsAppNotifications(value: boolean) {
@@ -1745,12 +1789,11 @@ export function App() {
     }
   }
 
-  async function handleSubmitWhatsApp(event: FormEvent) {
-    event.preventDefault();
+  async function prepareWhatsAppSetup() {
     if (!whatsAppConnectionTarget) return;
     if (!whatsAppNumber.trim()) {
       setWhatsAppModalMessage("Escribe el numero de WhatsApp que quieres asociar.");
-      return;
+      return null;
     }
 
     setLoading(true);
@@ -1758,14 +1801,29 @@ export function App() {
 
     try {
       const result = await startWhatsAppSetup(token, whatsAppConnectionTarget.id, whatsAppNumber.trim());
-      window.open(result.whatsapp_url, "_blank", "noopener,noreferrer");
-      setMessage("Se abrio WhatsApp Web. Envia el mensaje prellenado para confirmar la vinculacion.");
-      closeWhatsAppModal();
+      setWhatsAppSetupUrl(result.whatsapp_url);
       await refreshConnections();
+      return result.whatsapp_url;
     } catch (error) {
       setWhatsAppModalMessage(error instanceof Error ? error.message : "No se pudo iniciar la configuracion de WhatsApp");
+      return null;
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleGenerateWhatsAppQr() {
+    const whatsappUrl = await prepareWhatsAppSetup();
+    if (whatsappUrl) {
+      setWhatsAppModalMessage("QR generado. Escanealo desde el telefono y envia el mensaje prellenado para confirmar la vinculacion.");
+    }
+  }
+
+  async function handleOpenWhatsAppWeb() {
+    const whatsappUrl = whatsAppSetupUrl || (await prepareWhatsAppSetup());
+    if (whatsappUrl) {
+      window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+      setWhatsAppModalMessage("Se abrio WhatsApp Web. Envia el mensaje prellenado para confirmar la vinculacion.");
     }
   }
 
@@ -2534,18 +2592,41 @@ export function App() {
           <section className="panel">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Roots activos</p>
+                <p className="eyebrow">Usuarios root</p>
                 <h2>Usuarios administradores</h2>
               </div>
             </div>
             <div className="rules-table-list">
               {rootUsers.map((rootUser) => (
-                <article className="rule-row" key={rootUser.id}>
+                <article className={`rule-row root-user-row ${rootUser.is_active ? "" : "inactive"}`} key={rootUser.id}>
                   <div>
                     <strong>{rootUser.name}</strong>
                     <span>{rootUser.email}</span>
                   </div>
-                  <span className="status">{rootUser.platform_role}</span>
+                  <div className="root-user-actions">
+                    <span className="status">{rootUser.platform_role}</span>
+                    <span className={`status ${rootUser.is_active ? "" : "warning"}`}>
+                      {rootUser.is_active ? "activo" : "inactivo"}
+                    </span>
+                    <button
+                      className={`icon-button ${rootUser.is_active ? "danger" : "solid"}`}
+                      disabled={loading}
+                      onClick={() => handleToggleRootUser(rootUser)}
+                      title={rootUser.is_active ? "Inactivar root" : "Activar root"}
+                      type="button"
+                    >
+                      {rootUser.is_active ? <X size={18} /> : <CheckCircle2 size={18} />}
+                    </button>
+                    <button
+                      className="icon-button danger"
+                      disabled={loading}
+                      onClick={() => handleDeleteRootUser(rootUser)}
+                      title="Eliminar root"
+                      type="button"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
                 </article>
               ))}
               {rootUsers.length === 0 && <div className="empty compact-empty">Aun no hay usuarios root creados.</div>}
@@ -4118,7 +4199,7 @@ export function App() {
 
       {whatsAppConnectionTarget && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="whatsapp-modal-title">
+          <section className="modal whatsapp-modal" role="dialog" aria-modal="true" aria-labelledby="whatsapp-modal-title">
             <div className="modal-header">
               <div>
                 <p className="eyebrow">WhatsApp</p>
@@ -4128,72 +4209,116 @@ export function App() {
                 <X size={18} />
               </button>
             </div>
-            <p className="muted">
-              Ingresa el numero del usuario que recibira notificaciones de la cuenta {whatsAppConnectionTarget.display_name || whatsAppConnectionTarget.email}.
-              Se abrira WhatsApp con un mensaje de confirmacion hacia el asistente de la plataforma.
-            </p>
             {whatsAppModalMessage && <p className="message modal-message">{whatsAppModalMessage}</p>}
-            <form className="modal-form whatsapp-settings-form" onSubmit={handleSubmitWhatsApp}>
-              <label>
-                Numero de WhatsApp
-                <input
-                  value={whatsAppNumber}
-                  onChange={(event) => setWhatsAppNumber(event.target.value)}
-                  placeholder="573001234567"
-                  inputMode="tel"
-                />
-              </label>
-              <button disabled={loading} type="submit">
-                <MessageCircle size={18} />
-                Abrir WhatsApp Web
-              </button>
-            </form>
-            <section className="whatsapp-preferences">
-              <div>
-                <p className="eyebrow">Notificaciones</p>
-                <h3>Tipos de avisos</h3>
-                <p className="muted">Controla que mensajes enviaremos a este numero cuando la cuenta este conectada.</p>
-              </div>
-              <ToggleRow
-                checked={whatsAppNotificationsEnabled}
-                description="Enciende o apaga todos los avisos de esta cuenta."
-                label="Todos"
-                onChange={setAllWhatsAppNotifications}
-              />
-              <ToggleRow
-                checked={whatsAppNotifyNewEmail}
-                description="Se envia solo si la regla tambien tiene WhatsApp habilitado."
-                label="Correo nuevo"
-                onChange={setWhatsAppNotifyNewEmail}
-              />
-              <div className="preference-group">
-                <span>Seguimiento</span>
+            <div className="whatsapp-modal-grid">
+              <section className="whatsapp-setup-card">
+                <div>
+                  <p className="eyebrow">Conexion</p>
+                  <h3>Vincular numero</h3>
+                  <p className="muted">
+                    Ingresa el numero que recibira notificaciones de {whatsAppConnectionTarget.display_name || whatsAppConnectionTarget.email}.
+                  </p>
+                </div>
+                <form className="whatsapp-settings-form" onSubmit={(event) => event.preventDefault()}>
+                  <label>
+                    Numero de WhatsApp
+                    <input
+                      value={whatsAppNumber}
+                      onChange={(event) => {
+                        setWhatsAppNumber(event.target.value);
+                        setWhatsAppSetupUrl("");
+                      }}
+                      placeholder="573001234567"
+                      inputMode="tel"
+                    />
+                  </label>
+                  <div className="whatsapp-action-grid">
+                    <button disabled={loading} onClick={handleGenerateWhatsAppQr} type="button">
+                      <QrCode size={18} />
+                      Generar QR
+                    </button>
+                    <button className="secondary-button" disabled={loading} onClick={handleOpenWhatsAppWeb} type="button">
+                      <MessageCircle size={18} />
+                      Abrir Web
+                    </button>
+                  </div>
+                </form>
+                <div className={`whatsapp-qr-panel ${whatsAppSetupUrl ? "" : "empty"}`}>
+                  {whatsAppSetupUrl ? (
+                    <>
+                      <div>
+                        <p className="eyebrow">Escaneo rapido</p>
+                        <h3>Codigo QR</h3>
+                        <p className="muted">Escanealo desde el telefono y envia el mensaje prellenado.</p>
+                      </div>
+                      <div className="whatsapp-qr-box">
+                        <img
+                          alt="Codigo QR para vincular WhatsApp"
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=12&data=${encodeURIComponent(whatsAppSetupUrl)}`}
+                        />
+                      </div>
+                      <a className="secondary-link whatsapp-qr-link" href={whatsAppSetupUrl} rel="noreferrer" target="_blank">
+                        <MessageCircle size={18} />
+                        Abrir enlace
+                      </a>
+                    </>
+                  ) : (
+                    <div className="whatsapp-empty-qr">
+                      <QrCode size={30} />
+                      <strong>QR pendiente</strong>
+                      <span>Agrega un numero y presiona Generar QR.</span>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="whatsapp-preferences">
+                <div>
+                  <p className="eyebrow">Notificaciones</p>
+                  <h3>Tipos de avisos</h3>
+                  <p className="muted">Define que mensajes enviaremos cuando esta cuenta este conectada.</p>
+                </div>
                 <ToggleRow
-                  checked={whatsAppNotifyFollowupOverdue}
-                  label="Vencidos"
-                  onChange={setWhatsAppNotifyFollowupOverdue}
+                  checked={whatsAppNotificationsEnabled}
+                  description="Enciende o apaga todos los avisos de esta cuenta."
+                  label="Todos"
+                  onChange={setAllWhatsAppNotifications}
                 />
                 <ToggleRow
-                  checked={whatsAppNotifyFollowupWarning}
-                  label="Por vencer"
-                  onChange={setWhatsAppNotifyFollowupWarning}
+                  checked={whatsAppNotifyNewEmail}
+                  description="Se envia solo si la regla tambien tiene WhatsApp habilitado."
+                  label="Correo nuevo"
+                  onChange={setWhatsAppNotifyNewEmail}
                 />
-                <ToggleRow
-                  checked={whatsAppNotifyFollowupLate}
-                  label="Contestados tarde"
-                  onChange={setWhatsAppNotifyFollowupLate}
-                />
-                <ToggleRow
-                  checked={whatsAppNotifyFollowupResponded}
-                  label="Respondidos"
-                  onChange={setWhatsAppNotifyFollowupResponded}
-                />
-              </div>
-              <button className="secondary-button" disabled={loading} onClick={handleSaveWhatsAppPreferences} type="button">
-                <MessageCircle size={18} />
-                Guardar preferencias
-              </button>
-            </section>
+                <div className="preference-group">
+                  <span>Seguimiento</span>
+                  <ToggleRow
+                    checked={whatsAppNotifyFollowupOverdue}
+                    label="Vencidos"
+                    onChange={setWhatsAppNotifyFollowupOverdue}
+                  />
+                  <ToggleRow
+                    checked={whatsAppNotifyFollowupWarning}
+                    label="Por vencer"
+                    onChange={setWhatsAppNotifyFollowupWarning}
+                  />
+                  <ToggleRow
+                    checked={whatsAppNotifyFollowupLate}
+                    label="Contestados tarde"
+                    onChange={setWhatsAppNotifyFollowupLate}
+                  />
+                  <ToggleRow
+                    checked={whatsAppNotifyFollowupResponded}
+                    label="Respondidos"
+                    onChange={setWhatsAppNotifyFollowupResponded}
+                  />
+                </div>
+                <button className="secondary-button" disabled={loading} onClick={handleSaveWhatsAppPreferences} type="button">
+                  <MessageCircle size={18} />
+                  Guardar preferencias
+                </button>
+              </section>
+            </div>
           </section>
         </div>
       )}
