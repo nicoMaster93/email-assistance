@@ -393,3 +393,59 @@ class RuleDraftResponse(BaseModel):
     has_attachment: bool | None = None
     action_type: str = "mark_detected"
     configuration: dict = {}
+
+
+class RuleTitleGenerateRequest(BaseModel):
+    text: str
+
+
+class RuleTitleGenerateResponse(BaseModel):
+    name: str
+
+
+class AiUsagePurposeStat(BaseModel):
+    purpose: str
+    label: str
+    calls: int
+    total_tokens: int
+
+
+class AiUsageDayStat(BaseModel):
+    day: str
+    calls: int
+    total_tokens: int
+
+
+class AiUsageOrgStat(BaseModel):
+    organization_id: int | None = None
+    organization_name: str
+    calls: int
+    total_tokens: int
+
+
+class AiUsageRecentItem(BaseModel):
+    id: int
+    purpose: str
+    label: str
+    model: str | None = None
+    organization_id: int | None = None
+    organization_name: str | None = None
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    success: bool
+    error_message: str | None = None
+    created_at: str | None = None
+
+
+class AiUsageDashboardResponse(BaseModel):
+    days: int
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    success_rate: float
+    by_purpose: list[AiUsagePurposeStat] = []
+    by_day: list[AiUsageDayStat] = []
+    by_organization: list[AiUsageOrgStat] = []
+    recent: list[AiUsageRecentItem] = []

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.db import db_session, insert_and_get_id, sql, using_postgres
 from app.dependencies import CurrentUser, require_owner
-from app.openai_client import draft_rule_from_text
+from app.openai_client import draft_rule_from_text, generate_rule_title
 from app.rule_api_dispatcher import _build_payload
 from app.schemas import (
     AutomationRuleCreate,
@@ -20,6 +20,8 @@ from app.schemas import (
     RuleDraftFromTextRequest,
     RuleDraftResponse,
     RuleFollowupConfigUpdate,
+    RuleTitleGenerateRequest,
+    RuleTitleGenerateResponse,
     RuleWhatsAppNotificationsUpdate,
     SystemEventResponse,
 )
@@ -379,8 +381,29 @@ def draft_from_text(payload: RuleDraftFromTextRequest, user: dict = CurrentUser)
             if not connection:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Conexion no encontrada")
 
-    return RuleDraftResponse(**draft_rule_from_text(payload.text, payload.connection_ids))
+    return RuleDraftResponse(
+        **draft_rule_from_text(
+            payload.text,
+            payload.connection_ids,
+            organization_id=user.get("organization_id"),
+            user_id=user.get("id"),
+        )
+    )
 
+
+@router.post("/rules/generate-title", response_model=RuleTitleGenerateResponse)
+def generate_title(payload: RuleTitleGenerateRequest, user: dict = CurrentUser) -> RuleTitleGenerateResponse:
+    require_owner(user)
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Describe la regla para generar el titulo")
+    return RuleTitleGenerateResponse(
+        name=generate_rule_title(
+            text,
+            organization_id=user.get("organization_id"),
+            user_id=user.get("id"),
+        )
+    )
 
 @router.patch("/rules/{rule_id}/whatsapp-notifications", response_model=AutomationRuleResponse)
 def update_rule_whatsapp_notifications(

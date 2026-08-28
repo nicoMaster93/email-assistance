@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_ORIGINS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, WHATSAPP_NUMBER_ASSISTANT
 from app.db import init_db
-from app.routers import attachments, auth, automation, followups, gmail, google_connections, google_oauth, organizations, whatsapp
+from app.routers import ai_usage, attachments, auth, automation, followups, gmail, google_connections, google_oauth, organizations, whatsapp
 
 app = FastAPI(
     title="Email Assistance API",
@@ -61,3 +61,4 @@ app.include_router(attachments.router)
 app.include_router(automation.router)
 app.include_router(followups.router)
 app.include_router(whatsapp.router)
+app.include_router(ai_usage.router)

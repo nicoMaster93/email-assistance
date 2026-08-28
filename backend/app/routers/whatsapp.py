@@ -20,6 +20,41 @@ def _normalize_phone(value: str | None) -> str:
     return re.sub(r"\D+", "", value or "")
 
 
+def _looks_like_phone(value: str | None) -> bool:
+    """WAHA a veces manda @lid (Linked ID) en vez del numero real."""
+    digits = _normalize_phone(value)
+    if not digits or not (8 <= len(digits) <= 15):
+        return False
+    raw = str(value or "").lower()
+    if "@lid" in raw:
+        return False
+    return True
+
+
+def _prefer_phone_candidates(raw_values: list) -> tuple[list[str], list[str]]:
+    """Separa numeros reales (@s.whatsapp.net) de Linked IDs (@lid)."""
+    phones: list[str] = []
+    others: list[str] = []
+    for raw in raw_values:
+        if not raw:
+            continue
+        normalized = _normalize_phone(str(raw))
+        if not normalized:
+            continue
+        if _looks_like_phone(str(raw)):
+            if normalized not in phones:
+                phones.append(normalized)
+        elif normalized not in others and normalized not in phones:
+            others.append(normalized)
+    return phones, others
+
+
+def _best_phone_candidate(phone_candidates: list[str], fallback: list[str] | None = None) -> str | None:
+    if phone_candidates:
+        return phone_candidates[0]
+    return None
+
+
 def _timestamp_to_iso(value) -> str | None:
     if value is None:
         return None
@@ -67,20 +102,25 @@ def _compact_metadata(payload: dict, from_candidates: list[str], message: str) -
     }
 
 
-def _extract_webhook_fields(payload: dict) -> tuple[list[str], str, dict]:
+def _extract_webhook_fields(payload: dict) -> tuple[list[str], list[str], str, dict]:
     event_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
     data = event_payload.get("_data") if isinstance(event_payload.get("_data"), dict) else {}
     key = data.get("key") if isinstance(data.get("key"), dict) else {}
 
-    candidates_from = [
+    # Prioridad: remoteJidAlt / participantAlt suelen traer el numero real cuando from es @lid
+    raw_from_values = [
+        key.get("remoteJidAlt"),
+        key.get("participantAlt"),
+        event_payload.get("participantAlt"),
+        event_payload.get("replyTo"),
         payload.get("from_number"),
-        payload.get("from"),
         payload.get("phone"),
         payload.get("wa_id"),
         payload.get("sender"),
         event_payload.get("from"),
-        key.get("remoteJidAlt"),
+        key.get("participant"),
         key.get("remoteJid"),
+        payload.get("from"),
     ]
     candidates_message = [
         payload.get("message"),
@@ -99,17 +139,20 @@ def _extract_webhook_fields(payload: dict) -> tuple[list[str], str, dict]:
                 messages = value.get("messages") or []
                 if messages:
                     message = messages[0]
-                    candidates_from.append(message.get("from"))
+                    raw_from_values.append(message.get("from"))
                     text = message.get("text") or {}
                     candidates_message.append(text.get("body"))
 
-    from_candidates = []
-    for item in candidates_from:
-        normalized = _normalize_phone(str(item)) if item else ""
-        if normalized and normalized not in from_candidates:
-            from_candidates.append(normalized)
+    phone_candidates, lid_candidates = _prefer_phone_candidates(raw_from_values)
+    from_candidates = phone_candidates + [item for item in lid_candidates if item not in phone_candidates]
     message = next((str(item) for item in candidates_message if item), "")
-    return from_candidates, message, _compact_metadata(payload, from_candidates, message)
+    metadata = _compact_metadata(payload, from_candidates, message)
+    metadata["phone_candidates"] = phone_candidates
+    metadata["lid_candidates"] = lid_candidates
+    reply_from_phone = next((str(v) for v in raw_from_values if v and _looks_like_phone(str(v))), None)
+    if reply_from_phone:
+        metadata["reply_chat_id"] = reply_from_phone if "@" in str(reply_from_phone) else f"{_normalize_phone(reply_from_phone)}@c.us"
+    return from_candidates, phone_candidates, message, metadata
 
 
 def _connected_context(conn, from_candidates: list[str]) -> tuple[dict | None, list[dict]]:
@@ -256,7 +299,7 @@ async def whatsapp_webhook(request: Request) -> dict:
 
         parsed_payload = WhatsAppWebhookRequest(**raw_item)
         payload = {**parsed_payload.payload, **raw_item}
-        from_candidates, message, metadata = _extract_webhook_fields(
+        from_candidates, phone_candidates, message, metadata = _extract_webhook_fields(
             {
                 **payload,
                 "from_number": parsed_payload.from_number or payload.get("from_number"),
@@ -281,12 +324,27 @@ async def whatsapp_webhook(request: Request) -> dict:
             ).fetchall()
 
             matched = None
+            matched_phone: str | None = None
             for row in pending_rows:
                 token = row["whatsapp_verification_token"]
+                if not token or token not in message:
+                    continue
                 pending_number = _normalize_phone(row["whatsapp_number"])
-                if pending_number in from_candidates and token and token in message:
+                # 1) Numero registrado coincide con telefono real o lid
+                if pending_number in from_candidates:
                     matched = row
+                    matched_phone = pending_number
                     break
+                # 2) Codigo correcto + WAHA trajo telefono real (@s.whatsapp.net / remoteJidAlt)
+                best_phone = _best_phone_candidate(phone_candidates)
+                if best_phone:
+                    matched = row
+                    matched_phone = best_phone
+                    break
+                # 3) Solo llego @lid: conectar igual por codigo y conservar el numero digitado
+                matched = row
+                matched_phone = pending_number
+                break
 
             if not matched:
                 connected_connection, notification_rules = _connected_context(conn, from_candidates)
@@ -301,6 +359,8 @@ async def whatsapp_webhook(request: Request) -> dict:
                             "rules": notification_rules,
                             "restriction": "Solo responder sobre correos marcados por reglas con notificaciones WhatsApp habilitadas.",
                         },
+                        organization_id=connected_connection.get("organization_id"),
+                        google_connection_id=connected_connection.get("id"),
                     )
                     send_result = send_whatsapp_text_result(
                         reply_session,
@@ -354,11 +414,13 @@ async def whatsapp_webhook(request: Request) -> dict:
             message_id = metadata.get("message_id")
             message_at = metadata.get("message_timestamp")
             contact_name = metadata.get("push_name")
+            phone_to_store = matched_phone or _normalize_phone(matched["whatsapp_number"])
             conn.execute(
                 sql(
                     """
                     UPDATE google_connections
                     SET whatsapp_status = 'connected',
+                        whatsapp_number = ?,
                         whatsapp_verification_token = NULL,
                         whatsapp_contact_name = ?,
                         whatsapp_last_message_id = ?,
@@ -367,7 +429,7 @@ async def whatsapp_webhook(request: Request) -> dict:
                     WHERE id = ?
                     """
                 ),
-                (contact_name, message_id, message_at, matched["id"]),
+                (phone_to_store, contact_name, message_id, message_at, matched["id"]),
             )
             conn.execute(
                 sql(
@@ -383,7 +445,7 @@ async def whatsapp_webhook(request: Request) -> dict:
             {
                 "status": "ok",
                 "google_connection_id": matched["id"],
-                "phone_number": matched["whatsapp_number"],
+                "phone_number": phone_to_store,
                 "message_id": metadata.get("message_id"),
             }
         )

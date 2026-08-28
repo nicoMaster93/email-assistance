@@ -321,6 +321,43 @@ export function deleteRootUser(token: string, id: number) {
   });
 }
 
+export type AiUsageDashboard = {
+  days: number;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  success_rate: number;
+  by_purpose: Array<{ purpose: string; label: string; calls: number; total_tokens: number }>;
+  by_day: Array<{ day: string; calls: number; total_tokens: number }>;
+  by_organization: Array<{
+    organization_id: number | null;
+    organization_name: string;
+    calls: number;
+    total_tokens: number;
+  }>;
+  recent: Array<{
+    id: number;
+    purpose: string;
+    label: string;
+    model: string | null;
+    organization_id: number | null;
+    organization_name: string | null;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    success: boolean;
+    error_message: string | null;
+    created_at: string | null;
+  }>;
+};
+
+export function getAiUsageDashboard(token: string, days = 30) {
+  return request<AiUsageDashboard>(`/ai-usage/dashboard?days=${days}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export function listOrganizations(token: string) {
   return request<Organization[]>("/organizations", {
     headers: { Authorization: `Bearer ${token}` },
@@ -676,6 +713,14 @@ export function draftRuleFromText(token: string, payload: { text: string; connec
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
+  });
+}
+
+export function generateRuleTitle(token: string, text: string) {
+  return request<{ name: string }>("/automation/rules/generate-title", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ text }),
   });
 }
 

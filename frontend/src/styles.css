@@ -102,7 +102,9 @@ select {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   color: var(--color-text);
+  max-width: 100%;
   min-height: 40px;
+  min-width: 0;
   outline: none;
   padding: 0 12px;
   width: 100%;
@@ -179,7 +181,8 @@ button:focus-visible {
 
 .app-shell {
   margin: 0;
-  max-width: none;
+  max-width: 100%;
+  min-width: 0;
   width: 100%;
 }
 
@@ -395,9 +398,15 @@ button:focus-visible {
 }
 
 .organization-shell {
+  align-content: start;
   display: grid;
   gap: 18px;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: none;
+}
+
+.organization-shell > .organization-panel,
+.organization-shell > .empty-organization-state {
+  min-height: 0;
 }
 
 .organization-panel,
@@ -690,13 +699,25 @@ label {
 }
 
 .topbar {
+  gap: 12px;
   justify-content: space-between;
   margin-bottom: 18px;
+  min-width: 0;
 }
 
 .session {
   color: var(--color-muted);
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.session-email {
+  max-width: min(280px, 42vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .theme-menu {
@@ -787,6 +808,35 @@ label {
   gap: 12px;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
   margin-bottom: 16px;
+}
+
+.ai-metrics-grid {
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+}
+
+.ai-usage-dashboard {
+  display: grid;
+  gap: 16px;
+}
+
+.master-tabs {
+  margin-bottom: 4px;
+}
+
+.inline-filter {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.inline-filter select {
+  min-width: 160px;
+}
+
+.compact-meta {
+  font-size: 12px;
 }
 
 .metric-card {
@@ -932,6 +982,10 @@ label {
   grid-template-columns: minmax(0, 1fr) 360px;
 }
 
+.mail-back-button {
+  display: none;
+}
+
 .panel {
   display: grid;
   gap: 16px;
@@ -969,6 +1023,11 @@ label {
 .icon-button.solid {
   background: #17624d;
   color: #fff;
+}
+
+.icon-button.pending {
+  background: #f3e7c8;
+  color: #8a6a16;
 }
 
 .danger {
@@ -1251,7 +1310,7 @@ label {
   border: 1px solid #dfe7e4;
   border-radius: 8px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
   padding: 12px;
 }
@@ -1264,21 +1323,96 @@ label {
   text-transform: uppercase;
 }
 
+.business-hours-modal {
+  /* width: .modal.business-hours-modal after .modal */
+}
+
+.business-hours-form {
+  gap: 14px;
+}
+
+.modal-lead {
+  margin-top: 4px;
+}
+
+.business-hours-settings {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1.6fr) repeat(2, minmax(130px, 0.9fr)) minmax(110px, 0.7fr);
+}
+
+.business-day-table {
+  display: grid;
+  gap: 6px;
+  overflow: visible;
+}
+
+.business-day-head,
 .business-day-row {
   align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(88px, 1.1fr) 70px 78px repeat(2, minmax(140px, 1.2fr));
+  min-width: 0;
+  width: 100%;
+}
+
+.business-day-head {
+  color: #66746f;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 0 10px 4px;
+  text-transform: uppercase;
+}
+
+.business-day-row {
   background: #fff;
   border: 1px solid #dfe7e4;
   border-radius: 8px;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(72px, 0.55fr) minmax(150px, 1fr) minmax(180px, 1.1fr);
-  min-width: 0;
-  padding: 10px;
+  padding: 8px 10px;
 }
 
 .business-day-row.disabled {
   background: #f6f8f7;
   color: #8c9994;
+}
+
+.business-day-name {
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.business-day-check {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  margin: 0;
+}
+
+.business-day-check input {
+  min-height: 18px;
+  width: 18px;
+}
+
+.business-day-row input[type="time"] {
+  box-sizing: border-box;
+  font-size: 14px;
+  min-width: 0;
+  padding-left: 8px;
+  padding-right: 8px;
+  width: 100%;
+}
+
+.business-hours-hint {
+  font-size: 12px;
+  margin: 0;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .business-day-row .checkbox-label {
@@ -1323,7 +1457,7 @@ label {
   border-radius: 8px;
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
   padding: 12px;
 }
 
@@ -1343,6 +1477,34 @@ label {
   font-size: 13px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.inbox-header-meta {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.refresh-hint {
+  color: #66746f;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.icon-button .spin,
+.spin {
+  animation: refresh-spin 0.8s linear infinite;
+}
+
+@keyframes refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .message-list {
@@ -1458,6 +1620,49 @@ label {
 .status.warning {
   background: #fff0d7;
   color: #8a5200;
+  margin-top: 8px;
+}
+
+.account-status-cell {
+  display: grid;
+  gap: 8px;
+}
+
+.capability-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.capability-badge {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 750;
+  gap: 4px;
+  line-height: 1;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.capability-badge.active {
+  background: #e2f2e9;
+  color: #17624d;
+}
+
+.capability-badge.pending {
+  background: #fff0d7;
+  color: #8a5200;
+}
+
+.capability-badge.off {
+  background: #eef2f0;
+  color: #7a8782;
+  opacity: 0.85;
+}
+
+.rule-capability-badges {
   margin-top: 8px;
 }
 
@@ -1865,6 +2070,8 @@ dd {
 }
 
 .table-wrap {
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
   overflow-x: auto;
 }
 
@@ -1924,8 +2131,17 @@ dd {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   gap: 8px;
+  -webkit-overflow-scrolling: touch;
   overflow-x: auto;
   padding: 8px;
+  scroll-snap-type: x proximity;
+}
+
+.content-tabs button,
+.account-tabs button {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  white-space: nowrap;
 }
 
 .content-tabs button,
@@ -2102,16 +2318,25 @@ dd {
   width: 100%;
 }
 
+.modal.wide-modal,
 .wide-modal {
-  max-width: 680px;
+  max-width: min(680px, calc(100vw - 32px));
 }
 
+.modal.api-modal,
 .api-modal {
-  max-width: 980px;
+  max-width: min(980px, calc(100vw - 32px));
 }
 
+.modal.whatsapp-modal,
 .whatsapp-modal {
-  max-width: min(940px, calc(100vw - 48px));
+  max-width: min(940px, calc(100vw - 32px));
+  width: min(940px, calc(100vw - 32px));
+}
+
+.modal.business-hours-modal {
+  max-width: min(980px, calc(100vw - 32px));
+  width: min(980px, calc(100vw - 32px));
 }
 
 .modal-header {
@@ -2382,6 +2607,8 @@ html[data-theme="automated-mail"] h3 {
 .app-shell .detail-card,
 .app-shell .followup-summary,
 .app-shell .business-day-schedule,
+.app-shell .business-hours-settings,
+.modal .business-hours-settings,
 .app-shell .radio-group,
 .app-shell .radio-option,
 .app-shell .account-picker,
@@ -2403,6 +2630,9 @@ html[data-theme="automated-mail"] h3 {
 .app-shell .organization-card,
 .app-shell .event-details > div,
 .app-shell .business-day-row,
+.app-shell .business-day-head,
+.modal .business-day-row,
+.modal .business-day-head,
 .app-shell .business-day-picker label,
 .app-shell .account-badges button,
 .app-shell .account-badges span,
@@ -2455,12 +2685,34 @@ html[data-theme="automated-mail"] h3 {
 .app-shell .segmented-control button.active,
 .modal .segmented-control button.active,
 .app-shell .account-command.solid,
+.app-shell .icon-button.solid,
+.app-shell .rule-row .icon-button.solid,
 .app-shell .filter-toggle.active,
 .app-shell .api-connection-list button.active,
 .modal .api-connection-list button.active {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-primary-text);
+}
+
+.app-shell .icon-button.pending {
+  background: color-mix(in srgb, #f0c14d 35%, var(--color-surface));
+  color: #8a6a16;
+}
+
+.app-shell .capability-badge.active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.app-shell .capability-badge.pending {
+  background: #fff0d7;
+  color: #8a5200;
+}
+
+.app-shell .capability-badge.off {
+  background: color-mix(in srgb, var(--color-border) 55%, var(--color-surface));
+  color: var(--color-muted);
 }
 
 .app-shell .organization-card-main:hover strong {
@@ -2481,6 +2733,7 @@ html[data-theme="automated-mail"] h3 {
 .app-shell .empty,
 .app-shell .eyebrow,
 .app-shell .results-count,
+.app-shell .refresh-hint,
 .app-shell .message-item p,
 .app-shell .account-cell,
 .app-shell .message-meta,
@@ -2639,18 +2892,41 @@ html[data-theme="automated-mail"] .app-shell .event-filters label span {
     grid-template-columns: 1fr;
   }
 
+  .mail-layout.mail-has-selection > .inbox-panel {
+    display: none;
+  }
+
+  .mail-layout:not(.mail-has-selection) > .detail-panel {
+    display: none;
+  }
+
+  .mail-layout.mail-has-selection .mail-back-button {
+    display: inline-flex;
+  }
+
   .followup-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .followup-row > div:nth-child(n + 3) {
+    grid-column: 1 / -1;
   }
 
   .detail-panel {
     position: static;
   }
+
+  .message-item {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
 }
 
 @media (max-width: 860px) {
+  .modal.whatsapp-modal,
   .whatsapp-modal {
-    max-width: none;
+    max-width: calc(100vw - 24px);
+    width: calc(100vw - 24px);
   }
 
   .whatsapp-modal-grid {
@@ -2665,6 +2941,10 @@ html[data-theme="automated-mail"] .app-shell .event-filters label span {
 @media (max-width: 900px) {
   .master-layout {
     grid-template-columns: 1fr;
+  }
+
+  .organization-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
   }
 
   .public-header,
@@ -2692,42 +2972,146 @@ html[data-theme="automated-mail"] .app-shell .event-filters label span {
   }
 
   .app-shell {
-    padding: 20px;
+    padding: 16px;
   }
 
   .topbar,
   .panel-header,
-  .workspace-toolbar {
+  .workspace-toolbar,
+  .section-title {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .filters-bar {
-    align-items: center;
+  .session {
+    justify-content: flex-start;
+    width: 100%;
   }
 
-  .summary-grid {
+  .session-email {
+    max-width: 100%;
+    order: -1;
+    width: 100%;
+  }
+
+  .session .secondary-button {
+    flex: 1 1 auto;
+  }
+
+  .brand-title {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .filters-bar {
+    align-items: stretch;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .search-field {
+    flex: 1 1 100%;
+  }
+
+  .summary-grid,
+  .summary-grid.ai-metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .toolbar-actions {
+    flex-wrap: wrap;
     justify-content: stretch;
+    width: 100%;
   }
 
   .toolbar-actions button {
-    flex: 1 1 0;
+    flex: 1 1 auto;
   }
 
   .message-list {
     max-height: none;
   }
 
+  .message-item {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .followup-row {
+    grid-template-columns: 1fr;
+  }
+
+  .followup-row > .status,
+  .followup-row > span.status {
+    justify-self: start;
+  }
+
   .business-day-picker > div {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  .business-hours-settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .business-day-head,
   .business-day-row {
+    grid-template-columns: minmax(72px, 1fr) 56px 64px repeat(2, minmax(120px, 1.2fr));
+  }
+
+  .modal.business-hours-modal,
+  .modal.wide-modal,
+  .modal.api-modal,
+  .modal.whatsapp-modal,
+  .wide-modal,
+  .api-modal,
+  .whatsapp-modal {
+    max-width: calc(100vw - 24px);
+    width: calc(100vw - 24px);
+  }
+
+  .content-tabs,
+  .account-tabs,
+  .work-tabs {
+    width: 100%;
+  }
+
+  .content-tabs button,
+  .account-tabs button,
+  .work-tabs button {
+    min-height: 44px;
+  }
+
+  .icon-button {
+    min-height: 44px;
+    width: 44px;
+  }
+
+  .rule-row {
+    align-items: start;
     grid-template-columns: 1fr;
+  }
+
+  .rule-row .row-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .checkbox-label {
+    white-space: normal;
+  }
+
+  select {
+    min-width: 0;
+  }
+
+  .auth-toolbar {
+    right: 16px;
+    top: 16px;
+  }
+
+  .auth-panel {
+    padding: 24px 18px;
   }
 }
 
@@ -2740,16 +3124,25 @@ html[data-theme="automated-mail"] .app-shell .event-filters label span {
     display: grid;
   }
 
+  .event-filter-actions button {
+    width: 100%;
+  }
+
   .auth-shell,
   .app-shell {
-    padding: 16px;
+    padding: 12px;
   }
 
   h1 {
-    font-size: 26px;
+    font-size: 24px;
   }
 
-  .summary-grid {
+  .brand-title h1 {
+    font-size: 22px;
+  }
+
+  .summary-grid,
+  .summary-grid.ai-metrics-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2769,16 +3162,50 @@ html[data-theme="automated-mail"] .app-shell .event-filters label span {
     grid-template-columns: 1fr;
   }
 
+  .account-actions,
+  .account-edit-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
   .two-column-form,
-  .business-day-picker > div {
+  .business-day-picker > div,
+  .business-hours-settings,
+  .day-hour-inputs {
     grid-template-columns: 1fr;
+  }
+
+  .business-day-head {
+    display: none;
+  }
+
+  .business-day-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .business-day-name {
+    grid-column: 1 / -1;
+  }
+
+  .modal-actions,
+  .modal-actions-row {
+    flex-direction: column-reverse;
+  }
+
+  .modal-actions button,
+  .modal-actions-row button,
+  .workspace-toolbar .secondary-button,
+  .session .secondary-button {
+    width: 100%;
   }
 
   .account-actions {
     justify-content: stretch;
   }
 
-  .account-actions button {
+  .account-actions button,
+  .account-command {
     flex: 1 1 auto;
   }
 
@@ -2794,21 +3221,156 @@ html[data-theme="automated-mail"] .app-shell .event-filters label span {
     grid-template-columns: 1fr;
   }
 
+  .filter-panel button {
+    width: 100%;
+  }
+
   .modal-backdrop {
     align-items: stretch;
-    padding: 12px;
+    padding: 10px;
   }
 
   .modal {
-    max-height: none;
+    border-radius: 12px;
+    max-height: calc(100dvh - 20px);
+    max-width: calc(100vw - 20px);
+    width: calc(100vw - 20px);
+  }
+
+  .modal.business-hours-modal,
+  .modal.wide-modal,
+  .modal.api-modal,
+  .modal.whatsapp-modal {
+    max-width: calc(100vw - 20px);
+    width: calc(100vw - 20px);
   }
 
   .message-item h3 {
     white-space: normal;
   }
 
-  .message-meta {
+  .message-meta,
+  .inbox-header-meta {
     align-items: start;
     text-align: left;
+  }
+
+  .inbox-header-meta {
+    width: 100%;
+  }
+
+  .results-count,
+  .refresh-hint {
+    white-space: normal;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .organization-card-main {
+    min-height: 120px;
+  }
+
+  .inline-filter {
+    align-items: stretch;
+    display: grid;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .inline-filter select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* Tables → card stack */
+  .accounts-table {
+    min-width: 0;
+  }
+
+  .accounts-table thead {
+    display: none;
+  }
+
+  .accounts-table tbody,
+  .accounts-table tr,
+  .accounts-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .accounts-table tr {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    padding: 10px 12px;
+  }
+
+  .accounts-table tbody tr:hover {
+    background: var(--color-primary-soft);
+  }
+
+  .accounts-table td {
+    align-items: start;
+    border-bottom: 0;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: minmax(88px, 104px) minmax(0, 1fr);
+    padding: 8px 0;
+  }
+
+  .accounts-table td + td {
+    border-top: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  }
+
+  .accounts-table td::before {
+    color: var(--color-muted);
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 850;
+    letter-spacing: 0.02em;
+    padding-top: 2px;
+    text-transform: uppercase;
+  }
+
+  .accounts-table td[data-label="Acciones"] {
+    align-items: center;
+  }
+
+  .accounts-table td[data-label="Acciones"] .row-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .accounts-table tr.table-empty-row,
+  .accounts-table tr.table-empty-row td {
+    border: 0;
+    display: block;
+    grid-template-columns: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .accounts-table tr.table-empty-row td::before {
+    content: none;
+  }
+
+  .theme-popover {
+    left: 0;
+    min-width: 0;
+    right: auto;
+    width: min(260px, calc(100vw - 48px));
+  }
+
+  .theme-popover::before {
+    left: 14px;
+    right: auto;
+  }
+
+  .password-toggle {
+    min-height: 44px;
+    width: 44px;
   }
 }

@@ -424,6 +424,9 @@ def _matched_rule_for_message(
                     "snippet": snippet,
                     "has_attachments": has_attachments,
                 },
+                organization_id=organization_id,
+                google_connection_id=connection_id,
+                automation_rule_id=rule["id"],
             )
             rule_diagnostic["checks"].append(
                 {

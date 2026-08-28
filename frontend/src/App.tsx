@@ -47,8 +47,11 @@ import {
   EmailFollowup,
   EmailMessage,
   evaluateFollowups,
+  generateRuleTitle,
+  getAiUsageDashboard,
   getFollowupSummary,
   GoogleConnection,
+  AiUsageDashboard,
   listAttachments,
   listEvents,
   listFollowups,
@@ -84,6 +87,25 @@ import {
 } from "./services/api";
 
 type AttachmentFilter = "all" | "with" | "without";
+type EmailRefreshInterval = "off" | "15" | "30" | "60" | "120" | "300";
+type MasterTab = "users" | "ai-usage";
+
+const EMAIL_REFRESH_OPTIONS: { value: EmailRefreshInterval; label: string }[] = [
+  { value: "off", label: "Desactivado" },
+  { value: "15", label: "Cada 15 s" },
+  { value: "30", label: "Cada 30 s" },
+  { value: "60", label: "Cada 60 s" },
+  { value: "120", label: "Cada 2 min" },
+  { value: "300", label: "Cada 5 min" },
+];
+
+function readEmailRefreshInterval(): EmailRefreshInterval {
+  const stored = localStorage.getItem("emails_refresh_interval_sec");
+  if (stored && EMAIL_REFRESH_OPTIONS.some((option) => option.value === stored)) {
+    return stored as EmailRefreshInterval;
+  }
+  return "60";
+}
 type MainTab = "accounts" | "rules";
 type WorkTab = "emails" | "rules" | "attachments" | "events" | "followups";
 type RuleMode = "ai" | "manual";
@@ -705,6 +727,49 @@ function isWhatsAppConnected(connection?: GoogleConnection) {
   return (connection?.whatsapp_status || "").trim().toLowerCase() === "connected";
 }
 
+function isWhatsAppPending(connection?: GoogleConnection) {
+  return (connection?.whatsapp_status || "").trim().toLowerCase() === "pending";
+}
+
+function ConnectionCapabilityBadges({ connection }: { connection: GoogleConnection }) {
+  const watchActive = isWatchActive(connection);
+  const whatsappConnected = isWhatsAppConnected(connection);
+  const whatsappPending = isWhatsAppPending(connection);
+  const followupActive = Boolean(connection.followup_enabled);
+
+  return (
+    <div className="capability-badges">
+      <span
+        className={`capability-badge ${watchActive ? "active" : "off"}`}
+        title={watchActive ? `Monitor hasta ${formatDate(connection.watch_desired_until || connection.watch_expiration_at)}` : "Monitor inactivo"}
+      >
+        <Bell size={12} />
+        Monitor
+      </span>
+      <span
+        className={`capability-badge ${whatsappConnected ? "active" : whatsappPending ? "pending" : "off"}`}
+        title={
+          whatsappConnected
+            ? `WhatsApp ${connection.whatsapp_contact_name || connection.whatsapp_number || "conectado"}`
+            : whatsappPending
+              ? "WhatsApp pendiente de verificacion"
+              : "WhatsApp no configurado"
+        }
+      >
+        <MessageCircle size={12} />
+        WhatsApp
+      </span>
+      <span
+        className={`capability-badge ${followupActive ? "active" : "off"}`}
+        title={followupActive ? `Seguimiento ${formatMinutes(connection.followup_response_time_minutes)}` : "Seguimiento inactivo"}
+      >
+        <Clock size={12} />
+        Seguimiento
+      </span>
+    </div>
+  );
+}
+
 function defaultWatchUntil() {
   const value = new Date();
   value.setDate(value.getDate() + 30);
@@ -733,6 +798,9 @@ export function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showRootPassword, setShowRootPassword] = useState(false);
+  const [showProfilePassword, setShowProfilePassword] = useState(false);
+  const [showAccountPassword, setShowAccountPassword] = useState(false);
   const [token, setToken] = useState(() => localStorage.getItem("access_token") ?? "");
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem("user");
@@ -740,6 +808,9 @@ export function App() {
   });
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [rootUsers, setRootUsers] = useState<RootUser[]>([]);
+  const [masterTab, setMasterTab] = useState<MasterTab>("users");
+  const [aiUsageDays, setAiUsageDays] = useState("30");
+  const [aiUsage, setAiUsage] = useState<AiUsageDashboard | null>(null);
   const [organizationsLoaded, setOrganizationsLoaded] = useState(false);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState(
     () => initialRoute.organizationId || localStorage.getItem("selected_organization_id") || "",
@@ -857,6 +928,8 @@ export function App() {
   const [eventLimit, setEventLimit] = useState("100");
   const [attachmentFilter, setAttachmentFilter] = useState<AttachmentFilter>("all");
   const [showFilters, setShowFilters] = useState(false);
+  const [emailRefreshInterval, setEmailRefreshInterval] = useState<EmailRefreshInterval>(readEmailRefreshInterval);
+  const [messagesRefreshing, setMessagesRefreshing] = useState(false);
   const [themePalette, setThemePalette] = useState<ThemePalette>(
     () => (localStorage.getItem("theme_palette") as ThemePalette | null) || "automated-mail",
   );
@@ -893,6 +966,10 @@ export function App() {
     document.documentElement.dataset.theme = themePalette;
     localStorage.setItem("theme_palette", themePalette);
   }, [themePalette]);
+
+  useEffect(() => {
+    localStorage.setItem("emails_refresh_interval_sec", emailRefreshInterval);
+  }, [emailRefreshInterval]);
 
   useEffect(() => {
     function handlePopState() {
@@ -956,6 +1033,24 @@ export function App() {
     }
   }, [connections, selectedConnectionId]);
 
+  useEffect(() => {
+    if (!token || !isLoggedIn || activePanel !== "emails" || emailRefreshInterval === "off") return;
+    const seconds = Number(emailRefreshInterval);
+    if (!Number.isFinite(seconds) || seconds < 5) return;
+
+    const timerId = window.setInterval(() => {
+      void (async () => {
+        try {
+          setMessages(await listMessages(token));
+        } catch {
+          // Silencioso en auto-refresh para no interrumpir la vista.
+        }
+      })();
+    }, seconds * 1000);
+
+    return () => window.clearInterval(timerId);
+  }, [token, isLoggedIn, activePanel, emailRefreshInterval]);
+
   async function refreshConnections(activeToken = token) {
     try {
       const loadedConnections = await listConnections(activeToken);
@@ -977,6 +1072,20 @@ export function App() {
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudieron cargar las cuentas");
+    }
+  }
+
+  async function refreshMessagesView(options: { silent?: boolean } = {}) {
+    if (!token) return;
+    try {
+      setMessagesRefreshing(true);
+      setMessages(await listMessages(token));
+    } catch (error) {
+      if (!options.silent) {
+        setMessage(error instanceof Error ? error.message : "No se pudieron actualizar los correos");
+      }
+    } finally {
+      setMessagesRefreshing(false);
     }
   }
 
@@ -1052,6 +1161,14 @@ export function App() {
     }
   }
 
+  async function refreshAiUsage(activeToken = token, days = Number(aiUsageDays || 30)) {
+    try {
+      setAiUsage(await getAiUsageDashboard(activeToken, Number.isFinite(days) ? days : 30));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cargar el consumo de IA");
+    }
+  }
+
   const filteredMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
@@ -1078,8 +1195,8 @@ export function App() {
   }, [attachmentFilter, messages, query, selectedConnectionId, statusFilter]);
 
   const selectedMessage = useMemo(() => {
-    if (!filteredMessages.length) return null;
-    return filteredMessages.find((emailMessage) => emailMessage.id === selectedMessageId) ?? filteredMessages[0];
+    if (!selectedMessageId || !filteredMessages.length) return null;
+    return filteredMessages.find((emailMessage) => emailMessage.id === selectedMessageId) ?? null;
   }, [filteredMessages, selectedMessageId]);
 
   const selectedAttachments = useMemo(() => {
@@ -1093,8 +1210,8 @@ export function App() {
       return;
     }
 
-    if (!selectedMessageId || !filteredMessages.some((emailMessage) => emailMessage.id === selectedMessageId)) {
-      setSelectedMessageId(filteredMessages[0].id);
+    if (selectedMessageId && !filteredMessages.some((emailMessage) => emailMessage.id === selectedMessageId)) {
+      setSelectedMessageId(null);
     }
   }, [filteredMessages, selectedMessageId]);
 
@@ -1241,6 +1358,7 @@ export function App() {
     setFollowups([]);
     setFollowupSummary(null);
     setEvents([]);
+    setMessage("");
   }
 
   async function handleDeleteOrganization(organization: Organization) {
@@ -1897,8 +2015,10 @@ export function App() {
 
     try {
       const normalizedText = ruleText.trim();
+      const titleResponse = await generateRuleTitle(token, normalizedText);
+      const generatedName = titleResponse.name.trim() || "Regla IA";
       const payload = {
-        name: normalizedText.length > 70 ? `${normalizedText.slice(0, 67)}...` : normalizedText,
+        name: generatedName,
         action_type: "ai_match",
         configuration: {
           ai_description: normalizedText,
@@ -1912,10 +2032,10 @@ export function App() {
       };
       if (editingRule) {
         await updateRule(token, editingRule.id, payload);
-        setMessage("Regla con IA actualizada.");
+        setMessage(`Regla con IA actualizada: ${generatedName}`);
       } else {
         await createRule(token, payload);
-        setMessage("Regla con IA creada.");
+        setMessage(`Regla con IA creada: ${generatedName}`);
       }
       closeRuleModal();
       await refreshConnections();
@@ -2523,12 +2643,23 @@ export function App() {
           </label>
           <label>
             Nueva contrasena
-            <input
-              value={profilePassword}
-              onChange={(event) => setProfilePassword(event.target.value)}
-              placeholder="Dejalo vacio para conservarla"
-              type="password"
-            />
+            <span className="password-field">
+              <input
+                value={profilePassword}
+                onChange={(event) => setProfilePassword(event.target.value)}
+                placeholder="Dejalo vacio para conservarla"
+                type={showProfilePassword ? "text" : "password"}
+              />
+              <button
+                aria-label={showProfilePassword ? "Ocultar contrasena" : "Mostrar contrasena"}
+                className="password-toggle"
+                onClick={() => setShowProfilePassword((current) => !current)}
+                title={showProfilePassword ? "Ocultar contrasena" : "Mostrar contrasena"}
+                type="button"
+              >
+                {showProfilePassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </span>
           </label>
           <button disabled={loading} type="submit">
             <UserRound size={18} />
@@ -2545,10 +2676,10 @@ export function App() {
         <header className="topbar">
           <BrandTitle
             title="Panel master"
-            subtitle="Crea usuarios root. Cada root administra un espacio aislado con sus propias organizaciones."
+            subtitle="Crea usuarios root y monitorea el consumo de IA de toda la plataforma."
           />
           <div className="session">
-            <span>{activeUser.email}</span>
+            <span className="session-email">{activeUser.email}</span>
             <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
               <UserRound size={18} />
             </button>
@@ -2559,80 +2690,277 @@ export function App() {
           </div>
         </header>
 
-        <section className="master-layout">
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Usuarios root</p>
-                <h2>Crear nuevo root</h2>
-                <p className="muted">Este usuario podra crear sus organizaciones, cuentas, reglas y configuraciones.</p>
-              </div>
-            </div>
-            <form className="modal-form" onSubmit={handleCreateRootUser}>
-              {rootUserMessage && <p className="message modal-message">{rootUserMessage}</p>}
-              <label>
-                Nombre
-                <input value={rootUserName} onChange={(event) => setRootUserName(event.target.value)} placeholder="Administrador cliente" />
-              </label>
-              <label>
-                Correo
-                <input value={rootUserEmail} onChange={(event) => setRootUserEmail(event.target.value)} placeholder="admin@cliente.com" type="email" />
-              </label>
-              <label>
-                Contrasena
-                <input value={rootUserPassword} onChange={(event) => setRootUserPassword(event.target.value)} placeholder="Clave inicial" type="password" />
-              </label>
-              <button disabled={loading} type="submit">
-                <UserRound size={18} />
-                Crear root
-              </button>
-            </form>
-          </section>
+        <nav className="content-tabs master-tabs">
+          <button
+            className={masterTab === "users" ? "active" : ""}
+            onClick={() => setMasterTab("users")}
+            type="button"
+          >
+            <UserRound size={18} />
+            Usuarios root
+          </button>
+          <button
+            className={masterTab === "ai-usage" ? "active" : ""}
+            onClick={() => {
+              setMasterTab("ai-usage");
+              void refreshAiUsage();
+            }}
+            type="button"
+          >
+            <Sparkles size={18} />
+            Consumo IA
+          </button>
+        </nav>
 
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Usuarios root</p>
-                <h2>Usuarios administradores</h2>
+        {message && (
+          <p className="message app-message" role="status">
+            {message}
+          </p>
+        )}
+
+        {masterTab === "users" ? (
+          <section className="master-layout">
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Usuarios root</p>
+                  <h2>Crear nuevo root</h2>
+                  <p className="muted">Este usuario podra crear sus organizaciones, cuentas, reglas y configuraciones.</p>
+                </div>
               </div>
-            </div>
-            <div className="rules-table-list">
-              {rootUsers.map((rootUser) => (
-                <article className={`rule-row root-user-row ${rootUser.is_active ? "" : "inactive"}`} key={rootUser.id}>
-                  <div>
-                    <strong>{rootUser.name}</strong>
-                    <span>{rootUser.email}</span>
-                  </div>
-                  <div className="root-user-actions">
-                    <span className="status">{rootUser.platform_role}</span>
-                    <span className={`status ${rootUser.is_active ? "" : "warning"}`}>
-                      {rootUser.is_active ? "activo" : "inactivo"}
-                    </span>
+              <form className="modal-form" onSubmit={handleCreateRootUser}>
+                {rootUserMessage && <p className="message modal-message">{rootUserMessage}</p>}
+                <label>
+                  Nombre
+                  <input value={rootUserName} onChange={(event) => setRootUserName(event.target.value)} placeholder="Administrador cliente" />
+                </label>
+                <label>
+                  Correo
+                  <input value={rootUserEmail} onChange={(event) => setRootUserEmail(event.target.value)} placeholder="admin@cliente.com" type="email" />
+                </label>
+                <label>
+                  Contrasena
+                  <span className="password-field">
+                    <input
+                      value={rootUserPassword}
+                      onChange={(event) => setRootUserPassword(event.target.value)}
+                      placeholder="Clave inicial"
+                      type={showRootPassword ? "text" : "password"}
+                    />
                     <button
-                      className={`icon-button ${rootUser.is_active ? "danger" : "solid"}`}
-                      disabled={loading}
-                      onClick={() => handleToggleRootUser(rootUser)}
-                      title={rootUser.is_active ? "Inactivar root" : "Activar root"}
+                      aria-label={showRootPassword ? "Ocultar contrasena" : "Mostrar contrasena"}
+                      className="password-toggle"
+                      onClick={() => setShowRootPassword((current) => !current)}
+                      title={showRootPassword ? "Ocultar contrasena" : "Mostrar contrasena"}
                       type="button"
                     >
-                      {rootUser.is_active ? <X size={18} /> : <CheckCircle2 size={18} />}
+                      {showRootPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
-                    <button
-                      className="icon-button danger"
-                      disabled={loading}
-                      onClick={() => handleDeleteRootUser(rootUser)}
-                      title="Eliminar root"
-                      type="button"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </article>
-              ))}
-              {rootUsers.length === 0 && <div className="empty compact-empty">Aun no hay usuarios root creados.</div>}
-            </div>
+                  </span>
+                </label>
+                <button disabled={loading} type="submit">
+                  <UserRound size={18} />
+                  Crear root
+                </button>
+              </form>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Usuarios root</p>
+                  <h2>Usuarios administradores</h2>
+                </div>
+              </div>
+              <div className="rules-table-list">
+                {rootUsers.map((rootUser) => (
+                  <article className={`rule-row root-user-row ${rootUser.is_active ? "" : "inactive"}`} key={rootUser.id}>
+                    <div>
+                      <strong>{rootUser.name}</strong>
+                      <span>{rootUser.email}</span>
+                    </div>
+                    <div className="root-user-actions">
+                      <span className="status">{rootUser.platform_role}</span>
+                      <span className={`status ${rootUser.is_active ? "" : "warning"}`}>
+                        {rootUser.is_active ? "activo" : "inactivo"}
+                      </span>
+                      <button
+                        className={`icon-button ${rootUser.is_active ? "danger" : "solid"}`}
+                        disabled={loading}
+                        onClick={() => handleToggleRootUser(rootUser)}
+                        title={rootUser.is_active ? "Inactivar root" : "Activar root"}
+                        type="button"
+                      >
+                        {rootUser.is_active ? <X size={18} /> : <CheckCircle2 size={18} />}
+                      </button>
+                      <button
+                        className="icon-button danger"
+                        disabled={loading}
+                        onClick={() => handleDeleteRootUser(rootUser)}
+                        title="Eliminar root"
+                        type="button"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {rootUsers.length === 0 && <div className="empty compact-empty">Aun no hay usuarios root creados.</div>}
+              </div>
+            </section>
           </section>
-        </section>
+        ) : (
+          <section className="ai-usage-dashboard">
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">OpenAI</p>
+                  <h2>Consumo de IA</h2>
+                  <p className="muted">Llamadas, tokens y uso por proposito u organizacion.</p>
+                </div>
+                <div className="toolbar-actions">
+                  <label className="inline-filter">
+                    Periodo
+                    <select
+                      aria-label="Periodo de consumo IA"
+                      value={aiUsageDays}
+                      onChange={(event) => {
+                        setAiUsageDays(event.target.value);
+                        void refreshAiUsage(token, Number(event.target.value));
+                      }}
+                    >
+                      <option value="7">Ultimos 7 dias</option>
+                      <option value="30">Ultimos 30 dias</option>
+                      <option value="90">Ultimos 90 dias</option>
+                      <option value="365">Ultimo ano</option>
+                    </select>
+                  </label>
+                  <button className="secondary-button" disabled={loading} onClick={() => void refreshAiUsage()} type="button">
+                    <RefreshCw size={17} />
+                    Actualizar
+                  </button>
+                </div>
+              </div>
+
+              <div className="summary-grid ai-metrics-grid">
+                <article className="metric-card">
+                  <span>Llamadas</span>
+                  <strong className="summary-number">{aiUsage?.calls ?? 0}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Tokens totales</span>
+                  <strong className="summary-number">{(aiUsage?.total_tokens ?? 0).toLocaleString()}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Input / Output</span>
+                  <strong className="summary-number">
+                    {(aiUsage?.input_tokens ?? 0).toLocaleString()} / {(aiUsage?.output_tokens ?? 0).toLocaleString()}
+                  </strong>
+                </article>
+                <article className="metric-card">
+                  <span>Exito</span>
+                  <strong className="summary-number">{aiUsage?.success_rate ?? 100}%</strong>
+                </article>
+              </div>
+            </section>
+
+            <section className="master-layout">
+              <section className="panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Desglose</p>
+                    <h2>Por proposito</h2>
+                  </div>
+                </div>
+                <div className="rules-table-list">
+                  {(aiUsage?.by_purpose || []).map((item) => (
+                    <article className="rule-row" key={item.purpose}>
+                      <div>
+                        <strong>{item.label}</strong>
+                        <span>{item.calls} llamadas</span>
+                      </div>
+                      <span className="status">{item.total_tokens.toLocaleString()} tokens</span>
+                    </article>
+                  ))}
+                  {(aiUsage?.by_purpose || []).length === 0 && <div className="empty compact-empty">Sin consumo registrado en este periodo.</div>}
+                </div>
+              </section>
+
+              <section className="panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Desglose</p>
+                    <h2>Por organizacion</h2>
+                  </div>
+                </div>
+                <div className="rules-table-list">
+                  {(aiUsage?.by_organization || []).map((item) => (
+                    <article className="rule-row" key={`${item.organization_id ?? "none"}-${item.organization_name}`}>
+                      <div>
+                        <strong>{item.organization_name}</strong>
+                        <span>{item.calls} llamadas</span>
+                      </div>
+                      <span className="status">{item.total_tokens.toLocaleString()} tokens</span>
+                    </article>
+                  ))}
+                  {(aiUsage?.by_organization || []).length === 0 && <div className="empty compact-empty">Sin consumo por organizacion.</div>}
+                </div>
+              </section>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Actividad</p>
+                  <h2>Ultimas llamadas</h2>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table className="accounts-table ai-usage-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Proposito</th>
+                      <th>Organizacion</th>
+                      <th>Modelo</th>
+                      <th>Tokens</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(aiUsage?.recent || []).map((item) => (
+                      <tr key={item.id}>
+                        <td data-label="Fecha">{formatDate(item.created_at)}</td>
+                        <td data-label="Proposito">
+                          <strong>{item.label}</strong>
+                        </td>
+                        <td data-label="Organizacion">{item.organization_name || "Sin organizacion"}</td>
+                        <td data-label="Modelo">{item.model || "—"}</td>
+                        <td data-label="Tokens">
+                          {item.total_tokens.toLocaleString()}
+                          <span className="muted compact-meta">
+                            {" "}
+                            ({item.input_tokens}/{item.output_tokens})
+                          </span>
+                        </td>
+                        <td data-label="Estado">
+                          <span className={`status ${item.success ? "" : "warning"}`}>{item.success ? "ok" : "error"}</span>
+                        </td>
+                      </tr>
+                    ))}
+                    {(aiUsage?.recent || []).length === 0 && (
+                      <tr className="table-empty-row">
+                        <td colSpan={6}>
+                          <div className="empty compact-empty">Aun no hay llamadas de IA registradas.</div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+        )}
         {profileModal}
       </main>
     );
@@ -2647,7 +2975,7 @@ export function App() {
             subtitle="Las cuentas de correo, reglas y sincronizaciones se administran dentro de una organizacion."
           />
           <div className="session">
-            <span>{activeUser.email}</span>
+            <span className="session-email">{activeUser.email}</span>
             <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
               <UserRound size={18} />
             </button>
@@ -2779,7 +3107,7 @@ export function App() {
               </button>
             </>
           )}
-          <span>{activeUser.email}</span>
+          <span className="session-email">{activeUser.email}</span>
           <button className="icon-button" onClick={openProfileModal} title="Mi perfil" type="button">
             <UserRound size={18} />
           </button>
@@ -2868,10 +3196,24 @@ export function App() {
             </div>
             <div className="rules-table-list">
               {rules.map((rule) => (
-                <article className="rule-row" key={rule.id}>
+                    <article className="rule-row" key={rule.id}>
                   <div>
                     <strong>{rule.name}</strong>
                     <span>{ruleSummary(rule)}</span>
+                    <div className="capability-badges rule-capability-badges">
+                      <span className={`capability-badge ${(rule.whatsapp_enabled_connection_ids || []).length > 0 ? "active" : "off"}`}>
+                        <MessageCircle size={12} />
+                        WhatsApp
+                      </span>
+                      <span className={`capability-badge ${rule.api_connection_count > 0 ? "active" : "off"}`}>
+                        <Link2 size={12} />
+                        API
+                      </span>
+                      <span className={`capability-badge ${followupConfig(rule).enabled ? "active" : "off"}`}>
+                        <Clock size={12} />
+                        Seguimiento
+                      </span>
+                    </div>
                     <div className="account-badges">
                       {(rule.connection_ids || []).map((connectionId) => (
                         <button key={connectionId} onClick={() => selectConnection(String(connectionId))} type="button">
@@ -2942,20 +3284,23 @@ export function App() {
                 <tbody>
                   {connections.map((connection) => (
                     <tr key={connection.id} onClick={() => selectConnection(String(connection.id))}>
-                      <td>
+                      <td data-label="Cuenta">
                         <strong>{connection.display_name || connection.email}</strong>
                         <span>{connection.email}</span>
                       </td>
-                      <td>{connection.purpose || "Sin proposito definido"}</td>
-                      <td>
+                      <td data-label="Proposito">{connection.purpose || "Sin proposito definido"}</td>
+                      <td data-label="Reglas">
                         <strong>{connectionRuleCount(connection.id)}</strong>
                         <span>{connectionRuleNames(connection.id).slice(0, 2).join(", ") || "Sin reglas"}</span>
                       </td>
-                      <td>{messages.filter((emailMessage) => emailMessage.google_connection_id === connection.id).length}</td>
-                      <td>
-                        <span className="status">{connection.status}</span>
+                      <td data-label="Correos">{messages.filter((emailMessage) => emailMessage.google_connection_id === connection.id).length}</td>
+                      <td data-label="Estado">
+                        <div className="account-status-cell">
+                          <span className="status">{connection.status}</span>
+                          <ConnectionCapabilityBadges connection={connection} />
+                        </div>
                       </td>
-                      <td>
+                      <td data-label="Acciones">
                         <div className="row-actions" onClick={(event) => event.stopPropagation()}>
                           {isOwner ? (
                             <>
@@ -2971,7 +3316,7 @@ export function App() {
                                 <RefreshCw size={17} />
                               </button>
                               <button
-                                className={`icon-button ${isWatchActive(connection) ? "danger" : ""}`}
+                                className={`icon-button ${isWatchActive(connection) ? "solid" : ""}`}
                                 disabled={loading}
                                 onClick={() =>
                                   isWatchActive(connection)
@@ -2982,14 +3327,25 @@ export function App() {
                               >
                                 <Bell size={17} />
                               </button>
-                              <button className="icon-button" disabled={loading} onClick={() => openWhatsAppModal(connection)} title="Configurar WhatsApp">
+                              <button
+                                className={`icon-button ${isWhatsAppConnected(connection) ? "solid" : isWhatsAppPending(connection) ? "pending" : ""}`}
+                                disabled={loading}
+                                onClick={() => openWhatsAppModal(connection)}
+                                title={
+                                  isWhatsAppConnected(connection)
+                                    ? "WhatsApp conectado"
+                                    : isWhatsAppPending(connection)
+                                      ? "WhatsApp pendiente de verificacion"
+                                      : "Configurar WhatsApp"
+                                }
+                              >
                                 <MessageCircle size={17} />
                               </button>
                               <button
                                 className={`icon-button ${connection.followup_enabled ? "solid" : ""}`}
                                 disabled={loading}
                                 onClick={() => openAccountFollowupModal(connection)}
-                                title="Seguimiento por cuenta"
+                                title={connection.followup_enabled ? "Seguimiento activo" : "Seguimiento por cuenta"}
                               >
                                 <Clock size={17} />
                               </button>
@@ -3007,7 +3363,7 @@ export function App() {
                     </tr>
                   ))}
                   {connections.length === 0 && (
-                    <tr>
+                    <tr className="table-empty-row">
                       <td colSpan={6}>
                         <div className="empty compact-empty">Aun no hay cuentas vinculadas.</div>
                       </td>
@@ -3071,9 +3427,9 @@ export function App() {
                       Sincronizar
                     </button>
                     {isWatchActive(selectedConnection) ? (
-                      <button className="account-command danger-command" disabled={loading} onClick={() => handleStopWatchConnection(selectedConnection.id)} type="button">
+                      <button className="account-command solid" disabled={loading} onClick={() => handleStopWatchConnection(selectedConnection.id)} type="button">
                         <Bell size={17} />
-                        Inactivar monitor
+                        Monitor activo
                       </button>
                     ) : (
                       <button className="account-command" disabled={loading} onClick={() => openWatchModal(selectedConnection)} type="button">
@@ -3081,13 +3437,23 @@ export function App() {
                         Activar monitor
                       </button>
                     )}
-                    <button className="account-command" disabled={loading} onClick={() => openWhatsAppModal(selectedConnection)} type="button">
+                    <button
+                      className={`account-command ${isWhatsAppConnected(selectedConnection) ? "solid" : ""}`}
+                      disabled={loading}
+                      onClick={() => openWhatsAppModal(selectedConnection)}
+                      type="button"
+                    >
                       <MessageCircle size={17} />
-                      WhatsApp
+                      {isWhatsAppConnected(selectedConnection) ? "WhatsApp activo" : isWhatsAppPending(selectedConnection) ? "WhatsApp pendiente" : "WhatsApp"}
                     </button>
-                    <button className="account-command" disabled={loading} onClick={() => openAccountFollowupModal(selectedConnection)} type="button">
+                    <button
+                      className={`account-command ${selectedConnection.followup_enabled ? "solid" : ""}`}
+                      disabled={loading}
+                      onClick={() => openAccountFollowupModal(selectedConnection)}
+                      type="button"
+                    >
                       <Clock size={17} />
-                      Seguimiento
+                      {selectedConnection.followup_enabled ? "Seguimiento activo" : "Seguimiento"}
                     </button>
                   </div>
                 ) : (
@@ -3161,16 +3527,23 @@ export function App() {
             </nav>
 
             {activePanel === "emails" && (
-              <section className="mail-layout">
+              <section className={`mail-layout ${selectedMessage ? "mail-has-selection" : ""}`}>
                 <section className="panel inbox-panel">
                   <div className="panel-header">
                     <div className="section-title">
                       <Inbox size={20} />
                       <h2>Correos recientes</h2>
                     </div>
-                    <span className="results-count">
-                      {filteredMessages.length} de {messages.length}
-                    </span>
+                    <div className="inbox-header-meta">
+                      <span className="results-count">
+                        {filteredMessages.length} de {messages.length}
+                      </span>
+                      <span className="refresh-hint">
+                        {emailRefreshInterval === "off"
+                          ? "Auto: off"
+                          : `Auto: ${EMAIL_REFRESH_OPTIONS.find((option) => option.value === emailRefreshInterval)?.label.replace("Cada ", "") ?? `${emailRefreshInterval}s`}`}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="filters-bar">
@@ -3183,6 +3556,16 @@ export function App() {
                         placeholder="Buscar asunto, remitente o contenido"
                       />
                     </label>
+                    <button
+                      aria-label="Actualizar correos"
+                      className="icon-button"
+                      disabled={messagesRefreshing || loading}
+                      type="button"
+                      onClick={() => void refreshMessagesView()}
+                      title="Actualizar correos"
+                    >
+                      <RefreshCw className={messagesRefreshing ? "spin" : undefined} size={18} />
+                    </button>
                     <button
                       aria-expanded={showFilters}
                       aria-controls="email-filters"
@@ -3224,12 +3607,27 @@ export function App() {
                           <option value="without">Sin adjuntos</option>
                         </select>
                       </label>
+                      <label>
+                        Actualización automática
+                        <select
+                          aria-label="Intervalo de actualización de correos"
+                          value={emailRefreshInterval}
+                          onChange={(event) => setEmailRefreshInterval(event.target.value as EmailRefreshInterval)}
+                        >
+                          {EMAIL_REFRESH_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                       <button
                         className="secondary-button"
                         type="button"
                         onClick={() => {
                           setStatusFilter("all");
                           setAttachmentFilter("all");
+                          setEmailRefreshInterval("60");
                         }}
                       >
                         Limpiar filtros
@@ -3274,6 +3672,15 @@ export function App() {
                       <p className="eyebrow">Detalle</p>
                       <h2>Contexto del correo</h2>
                     </div>
+                    {selectedMessage && (
+                      <button
+                        className="secondary-button mail-back-button"
+                        onClick={() => setSelectedMessageId(null)}
+                        type="button"
+                      >
+                        Volver a la lista
+                      </button>
+                    )}
                   </div>
 
                   {selectedMessage ? (
@@ -3361,6 +3768,20 @@ export function App() {
                       <div>
                         <strong>{rule.name}</strong>
                         <span>{ruleSummary(rule)}</span>
+                        <div className="capability-badges rule-capability-badges">
+                          <span className={`capability-badge ${(rule.whatsapp_enabled_connection_ids || []).length > 0 ? "active" : "off"}`}>
+                            <MessageCircle size={12} />
+                            WhatsApp
+                          </span>
+                          <span className={`capability-badge ${rule.api_connection_count > 0 ? "active" : "off"}`}>
+                            <Link2 size={12} />
+                            API
+                          </span>
+                          <span className={`capability-badge ${followupConfig(rule).enabled ? "active" : "off"}`}>
+                            <Clock size={12} />
+                            Seguimiento
+                          </span>
+                        </div>
                       </div>
                       {isOwner && (
                         <div className="row-actions">
@@ -3652,12 +4073,23 @@ export function App() {
               </label>
               <label>
                 Contrasena
-                <input
-                  value={newAccountPassword}
-                  onChange={(event) => setNewAccountPassword(event.target.value)}
-                  placeholder={editingAccount ? "Dejala vacia para conservarla" : "Minimo 6 caracteres"}
-                  type="password"
-                />
+                <span className="password-field">
+                  <input
+                    value={newAccountPassword}
+                    onChange={(event) => setNewAccountPassword(event.target.value)}
+                    placeholder={editingAccount ? "Dejala vacia para conservarla" : "Minimo 6 caracteres"}
+                    type={showAccountPassword ? "text" : "password"}
+                  />
+                  <button
+                    aria-label={showAccountPassword ? "Ocultar contrasena" : "Mostrar contrasena"}
+                    className="password-toggle"
+                    onClick={() => setShowAccountPassword((current) => !current)}
+                    title={showAccountPassword ? "Ocultar contrasena" : "Mostrar contrasena"}
+                    type="button"
+                  >
+                    {showAccountPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </span>
               </label>
               <button disabled={loading} type="submit">
                 {editingAccount ? <Pencil size={18} /> : <ShieldCheck size={18} />}
@@ -4325,76 +4757,111 @@ export function App() {
 
       {isBusinessHoursModalOpen && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="business-hours-modal-title">
+          <section className="modal business-hours-modal" role="dialog" aria-modal="true" aria-labelledby="business-hours-modal-title">
             <div className="modal-header">
               <div>
                 <p className="eyebrow">Seguimiento</p>
                 <h2 id="business-hours-modal-title">Horario habil de respuesta</h2>
+                <p className="muted modal-lead">
+                  Los vencimientos solo consumen tiempo dentro de estos dias y horas.
+                </p>
               </div>
               <button className="icon-button" onClick={closeBusinessHoursModal} title="Cerrar" type="button">
                 <X size={18} />
               </button>
             </div>
-            <p className="muted">
-              Este horario es excluyente: los vencimientos de seguimiento solo consumen tiempo dentro de los dias y horas seleccionados.
-            </p>
             {businessHoursMessage && <p className="message modal-message">{businessHoursMessage}</p>}
-            <form className="modal-form" onSubmit={handleSaveBusinessHours}>
-              <label>
-                Zona horaria
-                <select value={businessTimezone} onChange={(event) => setBusinessTimezone(event.target.value)}>
-                  <option value="America/Bogota">America/Bogota</option>
-                  <option value="America/Mexico_City">America/Mexico_City</option>
-                  <option value="America/Lima">America/Lima</option>
-                  <option value="America/Santiago">America/Santiago</option>
-                  <option value="America/New_York">America/New_York</option>
-                </select>
-              </label>
-              <div className="two-column-form">
+            <form className="modal-form business-hours-form" onSubmit={handleSaveBusinessHours}>
+              <div className="business-hours-settings">
                 <label>
-                  Hora general de inicio
+                  Zona horaria
+                  <select value={businessTimezone} onChange={(event) => setBusinessTimezone(event.target.value)}>
+                    <option value="America/Bogota">America/Bogota</option>
+                    <option value="America/Mexico_City">America/Mexico_City</option>
+                    <option value="America/Lima">America/Lima</option>
+                    <option value="America/Santiago">America/Santiago</option>
+                    <option value="America/New_York">America/New_York</option>
+                  </select>
+                </label>
+                <label>
+                  Inicio general
                   <input value={businessStartTime} onChange={(event) => setBusinessStartTime(event.target.value)} type="time" />
                 </label>
                 <label>
-                  Hora general de fin
+                  Fin general
                   <input value={businessEndTime} onChange={(event) => setBusinessEndTime(event.target.value)} type="time" />
                 </label>
+                <label>
+                  <span className="label-with-help">
+                    Pais festivos
+                    <span className="help-icon" tabIndex={0}>
+                      <Info size={15} />
+                      <span className="help-tooltip" role="tooltip">
+                        Codigo ISO de 2 letras (CO, MX, US). Si no hay cache local, el backend consulta Nager.Date y guarda los festivos.
+                      </span>
+                    </span>
+                  </span>
+                  <input
+                    maxLength={2}
+                    value={holidayCountry}
+                    onChange={(event) => setHolidayCountry(event.target.value)}
+                    placeholder="CO"
+                  />
+                </label>
               </div>
+
               <fieldset className="business-day-schedule">
-                <legend>Dias y excepciones</legend>
-                {BUSINESS_DAY_OPTIONS.map(([day, label]) => {
-                  const config = businessDayHours[String(day)] || {
-                    enabled: businessDays.includes(day),
-                    uses_default: true,
-                    start_time: null,
-                    end_time: null,
-                  };
-                  return (
-                    <div className={`business-day-row ${config.enabled ? "enabled" : "disabled"}`} key={day}>
-                      <label className="checkbox-label">
-                        <input checked={config.enabled} onChange={() => toggleBusinessDay(day)} type="checkbox" />
-                        {label}
-                      </label>
-                      <label className="checkbox-label">
-                        <input
-                          checked={config.uses_default}
-                          disabled={!config.enabled}
-                          onChange={(event) =>
-                            updateBusinessDayHour(day, {
-                              uses_default: event.target.checked,
-                              start_time: event.target.checked ? null : config.start_time || businessStartTime,
-                              end_time: event.target.checked ? null : config.end_time || businessEndTime,
-                            })
-                          }
-                          type="checkbox"
-                        />
-                        Usa horario general
-                      </label>
-                      <div className="day-hour-inputs">
+                <legend>Dias habiles</legend>
+                <div className="business-day-table" role="table" aria-label="Horario por dia">
+                  <div className="business-day-head" role="row">
+                    <span role="columnheader">Dia</span>
+                    <span role="columnheader">Activo</span>
+                    <span role="columnheader" title="Usa el horario general">
+                      General
+                    </span>
+                    <span role="columnheader">Inicio</span>
+                    <span role="columnheader">Fin</span>
+                  </div>
+                  {BUSINESS_DAY_OPTIONS.map(([day, label]) => {
+                    const config = businessDayHours[String(day)] || {
+                      enabled: businessDays.includes(day),
+                      uses_default: true,
+                      start_time: null,
+                      end_time: null,
+                    };
+                    return (
+                      <div className={`business-day-row ${config.enabled ? "enabled" : "disabled"}`} key={day} role="row">
+                        <strong className="business-day-name" role="cell">
+                          {label}
+                        </strong>
+                        <label className="business-day-check" role="cell">
+                          <input
+                            aria-label={`Activar ${label}`}
+                            checked={config.enabled}
+                            onChange={() => toggleBusinessDay(day)}
+                            type="checkbox"
+                          />
+                        </label>
+                        <label className="business-day-check" role="cell">
+                          <input
+                            aria-label={`${label} usa horario general`}
+                            checked={config.uses_default}
+                            disabled={!config.enabled}
+                            onChange={(event) =>
+                              updateBusinessDayHour(day, {
+                                uses_default: event.target.checked,
+                                start_time: event.target.checked ? null : config.start_time || businessStartTime,
+                                end_time: event.target.checked ? null : config.end_time || businessEndTime,
+                              })
+                            }
+                            type="checkbox"
+                          />
+                        </label>
                         <input
                           aria-label={`Inicio ${label}`}
                           disabled={!config.enabled || config.uses_default}
                           onChange={(event) => updateBusinessDayHour(day, { start_time: event.target.value })}
+                          role="cell"
                           type="time"
                           value={config.start_time || businessStartTime}
                         />
@@ -4402,39 +4869,28 @@ export function App() {
                           aria-label={`Fin ${label}`}
                           disabled={!config.enabled || config.uses_default}
                           onChange={(event) => updateBusinessDayHour(day, { end_time: event.target.value })}
+                          role="cell"
                           type="time"
                           value={config.end_time || businessEndTime}
                         />
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+                <p className="muted business-hours-hint">
+                  Si un correo llega despues del cierre, el contador arranca en el siguiente minuto habil.
+                </p>
               </fieldset>
-              <label>
-                <span className="label-with-help">
-                  Pais de festivos
-                  <span className="help-icon" tabIndex={0}>
-                    <Info size={15} />
-                    <span className="help-tooltip" role="tooltip">
-                      Usa el codigo ISO de 2 letras del pais, por ejemplo CO para Colombia, MX para Mexico o US para Estados Unidos.
-                      Si no existe cache local para ese pais y ano, el backend consulta Nager.Date y guarda los festivos en BD. Luego el seguimiento excluye esos festivos y los festivos propios de la organizacion.
-                    </span>
-                  </span>
-                </span>
-                <input
-                  maxLength={2}
-                  value={holidayCountry}
-                  onChange={(event) => setHolidayCountry(event.target.value)}
-                  placeholder="CO"
-                />
-              </label>
-              <p className="muted">
-                Ejemplo: si un correo llega el viernes despues del cierre, el contador inicia en el siguiente minuto habil configurado.
-              </p>
-              <button disabled={loading} type="submit">
-                <Clock size={18} />
-                Guardar horario
-              </button>
+
+              <div className="modal-actions">
+                <button className="secondary-button" disabled={loading} onClick={closeBusinessHoursModal} type="button">
+                  Cancelar
+                </button>
+                <button disabled={loading} type="submit">
+                  <Clock size={18} />
+                  Guardar horario
+                </button>
+              </div>
             </form>
           </section>
         </div>
