@@ -527,8 +527,22 @@ function ignoreReasonLabel(value: string) {
 function textFromMetadata(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "boolean") return value ? "Si" : "No";
-  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (typeof value === "string") return decodeEmailText(value);
+  if (typeof value === "number") return String(value);
   return null;
+}
+
+function decodeEmailText(value: string | null | undefined) {
+  if (!value) return "";
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number.parseInt(code, 10)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
 }
 
 function eventTone(event: SystemEvent) {
@@ -1046,10 +1060,10 @@ export function App() {
         (attachmentFilter === "with" && emailMessage.has_attachments) ||
         (attachmentFilter === "without" && !emailMessage.has_attachments);
       const searchableText = [
-        emailMessage.subject,
-        emailMessage.sender,
+        decodeEmailText(emailMessage.subject),
+        decodeEmailText(emailMessage.sender),
         emailMessage.connection_email,
-        emailMessage.snippet,
+        decodeEmailText(emailMessage.snippet),
       ]
         .filter(Boolean)
         .join(" ")
@@ -3154,9 +3168,9 @@ export function App() {
                       >
                         <div className="account-cell">{emailMessage.connection_email || "Cuenta no disponible"}</div>
                         <div className="message-main">
-                          <h3>{emailMessage.subject || "Sin asunto"}</h3>
-                          <p>{emailMessage.sender || "Remitente no disponible"}</p>
-                          {emailMessage.snippet && <p className="snippet">{emailMessage.snippet}</p>}
+                          <h3>{decodeEmailText(emailMessage.subject) || "Sin asunto"}</h3>
+                          <p>{decodeEmailText(emailMessage.sender) || "Remitente no disponible"}</p>
+                          {emailMessage.snippet && <p className="snippet">{decodeEmailText(emailMessage.snippet)}</p>}
                         </div>
                         <div className="message-meta">
                           {emailMessage.status === "deleted_in_gmail" && <span className="status warning">Eliminado en Gmail</span>}
@@ -3184,11 +3198,11 @@ export function App() {
                   {selectedMessage ? (
                     <div className="detail-content">
                       <div className="detail-card">
-                        <h3>{selectedMessage.subject || "Sin asunto"}</h3>
+                        <h3>{decodeEmailText(selectedMessage.subject) || "Sin asunto"}</h3>
                         <dl>
                           <div>
                             <dt>Remitente</dt>
-                            <dd>{selectedMessage.sender || "No disponible"}</dd>
+                            <dd>{decodeEmailText(selectedMessage.sender) || "No disponible"}</dd>
                           </div>
                           <div>
                             <dt>Cuenta</dt>
@@ -3209,7 +3223,7 @@ export function App() {
                             </dd>
                           </div>
                         </dl>
-                        {selectedMessage.snippet && <p className="detail-snippet">{selectedMessage.snippet}</p>}
+                        {selectedMessage.snippet && <p className="detail-snippet">{decodeEmailText(selectedMessage.snippet)}</p>}
                         {isOwner && (
                           <button className="secondary-button" disabled={loading} onClick={() => openManualFollowupModal(selectedMessage)} type="button">
                             <Clock size={17} />
@@ -3368,8 +3382,8 @@ export function App() {
                     <article className="followup-row" key={followup.id}>
                       <span className={`status followup-${followup.status}`}>{followupStatusLabel(followup.status)}</span>
                       <div>
-                        <strong>{followup.subject || "Sin asunto"}</strong>
-                        <span>{followup.sender || "Remitente no disponible"}</span>
+                        <strong>{decodeEmailText(followup.subject) || "Sin asunto"}</strong>
+                        <span>{decodeEmailText(followup.sender) || "Remitente no disponible"}</span>
                       </div>
                       <div>
                         <small>Fuente</small>
@@ -4052,7 +4066,7 @@ export function App() {
                 <X size={18} />
               </button>
             </div>
-            <p className="muted">{manualFollowupTarget.subject || "Sin asunto"}</p>
+            <p className="muted">{decodeEmailText(manualFollowupTarget.subject) || "Sin asunto"}</p>
             {manualFollowupMessage && <p className="message modal-message">{manualFollowupMessage}</p>}
             <form className="modal-form" onSubmit={handleCreateManualFollowup}>
               <label>

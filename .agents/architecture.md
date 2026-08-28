@@ -8,16 +8,16 @@ Modulos:
 
 - `main.py`: crea la app FastAPI, CORS, startup e incluye routers.
 - `config.py`: lee `.env` y define rutas/variables.
-- `db.py`: conexion SQLite/Postgres, schema inicial y seed del usuario demo.
+- `db.py`: conexion SQLite/Postgres y compatibilidad de schema base.
 - `migrations/`: migraciones versionadas aplicadas al iniciar el backend.
 - `security.py`: hash de password y token Bearer HMAC simple.
 - `dependencies.py`: obtiene usuario actual desde `Authorization: Bearer`.
 - `routers/auth.py`: login.
-- `routers/google_connections.py`: CRUD basico de cuentas conectadas.
+- `routers/google_connections.py`: CRUD de cuentas conectadas, usuarios de cuenta, WhatsApp y seguimiento por cuenta.
 - `routers/google_oauth.py`: inicio/callback OAuth de Google, intercambio de tokens y upsert de conexion.
 - `routers/gmail.py`: renovacion de token, sincronizacion manual, descarga de adjuntos, `users.watch`, Pub/Sub, Gmail History y listado de correos.
 - `routers/attachments.py`: carga/listado de adjuntos locales.
-- `routers/automation.py`: reglas asociadas a cuentas, eventos y borrador de reglas con IA.
+- `routers/automation.py`: reglas asociadas a cuentas, eventos, integraciones API, seguimiento y borrador de reglas con IA.
 - `google_client.py`: helper HTTP para OAuth refresh y Gmail API.
 - `openai_client.py`: helper HTTP para generar reglas estructuradas desde texto.
 - `schemas.py`: modelos Pydantic.
@@ -46,14 +46,17 @@ Tablas actuales:
 - `system_events`
 - `email_followups`
 - `organization_holidays`
+- `rule_api_connections`
 
 El modelo importante es:
 
 ```text
-user -> organization_members -> organization -> google_connections
+super_root -> root users
+root user -> organization_members -> organization -> google_connections
+account_user -> google_connection asignada
 ```
 
-Una cuenta Google pertenece a la organizacion, no directamente a una sesion. Esto permite varias cuentas y prepara el proyecto para multiusuario.
+Una cuenta Google pertenece a la organizacion y puede tener un usuario de cuenta asociado. El super root no trabaja dentro de organizaciones; solo crea roots. Cada root administra un espacio aislado y no ve datos de otros roots.
 
 ## Frontend
 
@@ -61,12 +64,12 @@ Ruta principal: `frontend/src`.
 
 Modulos:
 
-- `App.tsx`: UI principal, login, listado y vinculacion.
+- `App.tsx`: UI principal, login, pagina publica/legal, seleccion de organizaciones, cuentas, reglas, eventos, seguimientos y temas.
 - `services/api.ts`: cliente HTTP del backend.
-- `styles.css`: estilos iniciales.
+- `styles.css`: estilos de la aplicacion con paletas de tema.
 - `vite-env.d.ts`: tipos de Vite.
 
-La UI es deliberadamente simple: una pantalla de login y un panel de cuentas vinculadas.
+La UI esta organizada por roles. Super root ve el panel master; root ve organizaciones y administracion completa; account_user ve solo su cuenta, correos, adjuntos y reglas en lectura.
 
 ## Docker
 
@@ -89,13 +92,13 @@ Backend:
 APP_SECRET
 FRONTEND_ORIGIN
 DATABASE_URL
-DEMO_USER_EMAIL
-DEMO_USER_PASSWORD
-DEMO_ORGANIZATION_NAME
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
 GOOGLE_REDIRECT_URI
 GOOGLE_PUBSUB_TOPIC
+NAGER_DATE_BASE_URL
+OPENAI_API_KEY
+WHATSAPP_NUMBER_ASSISTANT
 ```
 
 Frontend:

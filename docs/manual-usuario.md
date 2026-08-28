@@ -18,6 +18,15 @@ No trabaja dentro de una organizacion y no ve correos, reglas ni cuentas de los 
 
 El acceso inicial se crea en la base de datos durante las migraciones. Por seguridad, debe cambiarse desde el perfil despues del primer ingreso.
 
+Cuenta bootstrap:
+
+```text
+Correo: master@emailasistance.com
+Rol: super_root
+```
+
+La clave inicial es una credencial sensible definida por la migracion bootstrap. No debe compartirse en documentacion publica y debe rotarse al primer ingreso.
+
 ### Root
 
 Usuario administrador de una o varias organizaciones.
@@ -68,6 +77,17 @@ No puede:
 
 Si el token expira, la aplicacion redirige automaticamente al login.
 
+## Paginas publicas
+
+La aplicacion incluye paginas publicas para uso productivo y aprobacion OAuth de Google:
+
+- Home publica.
+- Politica de privacidad.
+- Terminos de servicio.
+- Proceso de eliminacion de datos.
+
+Estas paginas no requieren iniciar sesion y tienen enlaces visibles entre si y hacia el portal.
+
 ## Navegacion y apariencia
 
 La navegacion principal queda reflejada en la URL. Si recargas la pagina, la aplicacion conserva la organizacion, cuenta y pestana seleccionada.
@@ -81,7 +101,9 @@ Ejemplos:
 /app/organizaciones/1/reglas
 ```
 
-Desde el selector de paleta en la barra superior puedes cambiar rapidamente los colores de la aplicacion. La paleta por defecto es `Correos Automatizados`.
+Desde el selector de paleta puedes cambiar rapidamente los colores de la aplicacion. Esta disponible en la home publica, politicas, terminos, eliminacion de datos, login y panel privado.
+
+La paleta por defecto es `Correos Automatizados`. El logo e iconos del portal usan la version azul del producto.
 
 ## Panel master
 
@@ -95,6 +117,8 @@ Para crear un usuario root:
 4. Presiona `Crear root`.
 
 El nuevo root podra iniciar sesion y crear sus propias organizaciones.
+
+Cada root queda aislado: solo ve las organizaciones, cuentas, reglas y correos que haya creado o que le pertenezcan.
 
 ## Organizaciones
 

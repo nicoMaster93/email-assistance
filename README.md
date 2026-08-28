@@ -24,7 +24,7 @@ Incluye:
 
 ```text
 backend/      API FastAPI, auth, conexiones y adjuntos
-frontend/     React + TS con login y gestion basica de cuentas
+frontend/     React + TS con login, temas, gestion de organizaciones, cuentas y reglas
 docs/         Manuales de usuario y operacion
 .agents/      Contexto para futuros agentes de desarrollo
 proyect.md    Documento original de producto/arquitectura
@@ -52,6 +52,23 @@ Backend:  http://127.0.0.1:8000/docs
 ```
 
 El usuario inicial de plataforma se crea en la base de datos mediante migraciones. Despues del primer ingreso, cambia su clave desde el perfil.
+
+## Usuarios y roles
+
+La aplicacion maneja tres niveles:
+
+- `super_root`: administra usuarios root. No ve organizaciones ni correos de los clientes.
+- `root`: crea y administra sus propias organizaciones, cuentas Gmail, reglas, monitores, WhatsApp, seguimientos e integraciones.
+- `account_user`: usuario asociado a una sola cuenta Gmail. Puede vincular o re-vincular Gmail, sincronizar y consultar sus correos/adjuntos.
+
+Usuario bootstrap inicial:
+
+```text
+Correo: master@emailasistance.com
+Rol: super_root
+```
+
+Este usuario se crea o promueve desde migraciones para no depender de variables de entorno. La clave inicial debe tratarse como credencial sensible y cambiarse inmediatamente desde el perfil en ambientes reales.
 
 ## Levantar todo con Docker
 

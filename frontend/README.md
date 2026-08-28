@@ -6,9 +6,11 @@ Incluye:
 
 - Login contra el backend.
 - Persistencia simple de sesion en `localStorage`.
+- Selector de paleta visual en login, paginas publicas y panel privado.
+- Gestion por roles: super root, root y usuario de cuenta.
+- Seleccion y gestion de organizaciones para usuarios root.
 - Listado de cuentas vinculadas.
-- Formulario para vincular una cuenta de correo en modo desarrollo.
-- Boton para iniciar OAuth real de Google.
+- Flujo OAuth real de Google para vincular o re-vincular cuentas.
 - Boton para sincronizar correos recientes por cuenta.
 - Bandeja simple de correos sincronizados, incluyendo cuenta origen.
 - Registro de monitor Gmail por cuenta.
@@ -53,12 +55,14 @@ cd frontend
 npm run build
 ```
 
-## Probar con el usuario demo
+## Acceso inicial
 
 ```text
-email: demo@example.com
-password: Demo123!
+email: master@emailasistance.com
+rol: super_root
 ```
+
+Este usuario permite crear usuarios root. Cada root crea sus propias organizaciones y administra sus cuentas. La clave inicial se define en la migracion bootstrap y debe cambiarse desde el perfil despues del primer ingreso.
 
 ## Docker solo frontend
 

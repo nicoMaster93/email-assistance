@@ -251,7 +251,14 @@ prompt=consent
 
 El usuario super root administra usuarios root. No trabaja dentro de una organizacion.
 
-El acceso inicial se conserva por compatibilidad con instalaciones existentes. Debe cambiarse desde el perfil despues del primer ingreso.
+El acceso inicial se crea o promueve desde migraciones para que el sistema no dependa de variables de entorno ni usuarios quemados en runtime.
+
+```text
+Correo: master@emailasistance.com
+Rol: super_root
+```
+
+La clave inicial es una credencial sensible definida por la migracion bootstrap. Debe cambiarse desde el perfil despues del primer ingreso.
 
 Cada usuario root puede crear sus propias organizaciones, cuentas, reglas y configuraciones. Un root no ve organizaciones ni datos creados por otros roots.
 

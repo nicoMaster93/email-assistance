@@ -17,10 +17,10 @@ Lee primero:
 - Frontend: React + TypeScript + Vite.
 - BD: SQLite para desarrollo rapido o Postgres via `DATABASE_URL`.
 - Docker Compose: `db`, `backend`, `frontend`.
-- Auth: token Bearer propio, simple, para desarrollo.
-- Usuario demo: `demo@example.com` / `Demo123!`.
+- Auth: token Bearer propio con roles `super_root`, `root` y `account_user`.
+- Usuario bootstrap super root: `master@emailasistance.com`. Se crea en BD por migracion y su clave debe tratarse como credencial sensible.
 - Google OAuth: endpoints base implementados en `backend/app/routers/google_oauth.py`.
-- Vinculacion de cuentas: OAuth real disponible si hay credenciales; simulacion manual mediante `POST /google-connections` para desarrollo.
+- Vinculacion de cuentas: OAuth real disponible si hay credenciales; el root puede crear acceso de usuario de cuenta y vincular ahora o despues.
 - Adjuntos: almacenamiento local dentro del backend, no MinIO.
 
 ## Comandos Frecuentes
@@ -67,6 +67,7 @@ npm run build
 - Mantener la V1 simple.
 - No introducir MinIO; los archivos viven en `backend/storage/attachments` o volumen Docker `backend_attachments`.
 - No reemplazar la separacion usuario/organizacion/conexion.
+- Mantener aislamiento multi-tenant: super root solo administra roots; cada root solo ve sus organizaciones; account_user solo ve su cuenta.
 - Filtrar siempre por `organization_id` en recursos multi-tenant.
 - No guardar `refresh_token` en texto plano; actualmente se cifra con AES-GCM usando `APP_SECRET`.
 - Todo cambio de base de datos debe implementarse como migracion versionada en `backend/app/migrations`.
